@@ -9,7 +9,10 @@ defmodule PactEx.Consumer.Apply do
   #   * query and header names may be binaries or atoms;
   #   * a list value becomes one native call per element, using its index;
   #   * a map or list body is JSON, a valid UTF-8 binary without NUL is text,
-  #     any other binary is sent as binary.
+  #     any other binary is sent as binary;
+  #   * a binary body without an explicit content type takes the value of the
+  #     interaction's Content-Type header (case-insensitive) when it is a
+  #     plain string, before the defaults above.
 
   alias PactEx.{Error, Native}
   alias PactEx.HTTP.{Interaction, Request, Response}
@@ -65,7 +68,7 @@ defmodule PactEx.Consumer.Apply do
          :ok <- native(Native.with_request(handle, request.method, path)),
          :ok <- query(handle, request.query),
          :ok <- headers(handle, :request, request.headers) do
-      body(handle, :request, request.body, request.content_type, "request body")
+      body(handle, :request, request.body, content_type(request), "request body")
     end
   end
 
@@ -73,7 +76,7 @@ defmodule PactEx.Consumer.Apply do
     with {:ok, status} <- status(response.status),
          :ok <- native(Native.response_status(handle, status)),
          :ok <- headers(handle, :response, response.headers) do
-      body(handle, :response, response.body, response.content_type, "response body")
+      body(handle, :response, response.body, content_type(response), "response body")
     end
   end
 
@@ -126,9 +129,32 @@ defmodule PactEx.Consumer.Apply do
 
   defp param_value(value, label), do: value(value, label)
 
+  # An explicit `:content_type` wins. Otherwise a binary body uses the
+  # Content-Type header, so the body and the header cannot disagree.
+  defp content_type(%{content_type: content_type}) when is_binary(content_type),
+    do: content_type
+
+  defp content_type(%{body: body, headers: headers}) when is_binary(body),
+    do: header_content_type(headers)
+
+  defp content_type(_part), do: nil
+
+  defp header_content_type(headers) do
+    Enum.find_value(headers, fn {name, values} ->
+      with {:ok, name} <- name(name, "header"),
+           "content-type" <- String.downcase(name),
+           [value | _] when is_binary(value) <- List.wrap(values) do
+        value
+      else
+        _ -> nil
+      end
+    end)
+  end
+
   defp body(_handle, _part, nil, _content_type, _label), do: :ok
 
-  defp body(handle, part, body, content_type, label) when is_map(body) or is_list(body) do
+  defp body(handle, part, body, content_type, label)
+       when is_map(body) or is_list(body) do
     with {:ok, json} <- encode_json(body, label) do
       native(Native.with_body(handle, part, content_type || "application/json", json))
     end

@@ -19,7 +19,14 @@ defmodule PactEx.Acceptance.MatchersEndToEndTest do
      [%{"match" => "type", "min" => 2}]},
     {"regex/2", regex("abc-123", "^abc-\\d+$"), "abc-999",
      [%{"match" => "regex", "regex" => "^abc-\\d+$"}]},
-    {"each_key/2", each_key(%{"k1" => 1}, "^k\\d$"), %{"k9" => 2}, :each_key},
+    {"each_key/2", each_key(%{"k1" => 1}, "^k\\d$"), %{"k9" => 2},
+     [
+       %{
+         "match" => "eachKey",
+         "rules" => [%{"match" => "regex", "regex" => "^k\\d$"}],
+         "value" => ~s({"k1":1})
+       }
+     ]},
     {"integer/1", integer(1), 42, [%{"match" => "integer"}]},
     {"decimal/1", decimal(1.5), 9.75, [%{"match" => "decimal"}]},
     {"boolean/1", boolean(true), false, [%{"match" => "boolean"}]},
@@ -43,9 +50,7 @@ defmodule PactEx.Acceptance.MatchersEndToEndTest do
 
   defp pact(dir), do: PactEx.new("matchers-consumer", "matchers-provider", pact_dir: dir)
 
-  defp read_pact(dir) do
-    dir |> Path.join("matchers-consumer-matchers-provider.json") |> File.read!() |> JSON.decode!()
-  end
+  defp read_pact(dir), do: PactFile.read!(dir, {"matchers-consumer", "matchers-provider"})
 
   defp request_interaction(matcher) do
     HTTP.interaction("matcher in request body")
@@ -72,14 +77,7 @@ defmodule PactEx.Acceptance.MatchersEndToEndTest do
         assert :ok =
                  run_request(dir, unquote(Macro.escape(matcher)), unquote(Macro.escape(value)))
 
-        case unquote(Macro.escape(expected)) do
-          :each_key ->
-            assert [%{"match" => "eachKey", "rules" => [%{"match" => "regex"}]}] =
-                     rules(dir, "request", "$.v")
-
-          expected ->
-            assert rules(dir, "request", "$.v") == expected
-        end
+        assert rules(dir, "request", "$.v") == unquote(Macro.escape(expected))
       end
     end
   end
