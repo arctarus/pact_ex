@@ -27,7 +27,8 @@ defmodule PactEx.Pact do
     * `:spec` - Pact specification, one of `:v2`, `:v3` or `:v4`. Defaults to `:v4`.
     * `:pact_dir` - Directory where the pact file is written. Defaults to `"pacts"`.
 
-  Raises `ArgumentError` on unknown options or an invalid `:spec`.
+  Raises `ArgumentError` on unknown options or an invalid `:spec`. Raises
+  `FunctionClauseError` if `consumer` or `provider` is not a string.
   """
   @spec new(String.t(), String.t(), keyword()) :: t()
   def new(consumer, provider, opts \\ []) when is_binary(consumer) and is_binary(provider) do

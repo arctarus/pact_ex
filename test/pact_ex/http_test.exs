@@ -198,6 +198,102 @@ defmodule PactEx.HTTPTest do
     end
   end
 
+  describe "argument validation" do
+    # Hides the value from the compile-time type checker, which would
+    # otherwise warn about the deliberately invalid calls below.
+    defp bad(value), do: Function.identity(value)
+
+    test "PactEx.new/3 rejects a non-binary consumer or provider" do
+      assert_raise FunctionClauseError, fn -> PactEx.new(bad(:c), "p") end
+      assert_raise FunctionClauseError, fn -> PactEx.new("c", bad(1)) end
+    end
+
+    test "interaction/1 rejects a non-binary description" do
+      assert_raise FunctionClauseError, fn -> HTTP.interaction(bad(:x)) end
+    end
+
+    test "given/3 rejects a non-binary state" do
+      assert_raise FunctionClauseError, fn -> HTTP.interaction("x") |> HTTP.given(bad(:s)) end
+    end
+
+    test "given/3 rejects params that are neither a map nor nil" do
+      assert_raise FunctionClauseError, fn ->
+        HTTP.interaction("x") |> HTTP.given("s", bad("x"))
+      end
+    end
+
+    test "with_request/4 rejects a bad method" do
+      for method <- [123, nil, true, false] do
+        assert_raise FunctionClauseError, fn ->
+          HTTP.interaction("x") |> HTTP.with_request(bad(method), "/")
+        end
+      end
+    end
+
+    test "with_request/4 rejects a bad path" do
+      assert_raise FunctionClauseError, fn ->
+        HTTP.interaction("x") |> HTTP.with_request(:get, bad(123))
+      end
+    end
+
+    test "will_respond_with/3 rejects a bad status" do
+      for status <- [0, "200", 99, 600, -1, 200.0] do
+        assert_raise FunctionClauseError, fn ->
+          HTTP.interaction("x") |> HTTP.will_respond_with(bad(status))
+        end
+      end
+    end
+
+    test "will_respond_with/3 accepts the status range limits" do
+      for status <- [100, 599] do
+        assert %HTTP.Response{status: ^status} =
+                 HTTP.interaction("x") |> HTTP.will_respond_with(status) |> Map.fetch!(:response)
+      end
+    end
+
+    test "with_request/4 rejects non-map query and headers" do
+      for opts <- [
+            [query: [{"a", "1"}]],
+            [query: "a=1"],
+            [headers: [{"accept", "x"}]],
+            [headers: {"accept", "x"}]
+          ] do
+        assert_raise ArgumentError, ~r/must be a map/, fn ->
+          HTTP.interaction("x") |> HTTP.with_request(:get, "/", opts)
+        end
+      end
+    end
+
+    test "will_respond_with/3 rejects non-map headers" do
+      for headers <- [[{"x-id", "1"}], {"x-id", "1"}, "x-id: 1"] do
+        assert_raise ArgumentError, ~r/must be a map/, fn ->
+          HTTP.interaction("x") |> HTTP.will_respond_with(200, headers: headers)
+        end
+      end
+    end
+  end
+
+  describe "replacing" do
+    test "with_request/4 again replaces the previous request" do
+      i =
+        HTTP.interaction("x")
+        |> HTTP.with_request(:get, "/a", query: %{"q" => "1"})
+        |> HTTP.with_request(:post, "/b")
+
+      assert %HTTP.Request{method: "POST", path: "/b", query: query} = i.request
+      assert query == %{}
+    end
+
+    test "will_respond_with/3 again replaces the previous response" do
+      i =
+        HTTP.interaction("x")
+        |> HTTP.will_respond_with(200, body: %{"a" => 1})
+        |> HTTP.will_respond_with(404)
+
+      assert %HTTP.Response{status: 404, body: nil} = i.response
+    end
+  end
+
   test "builder keeps provider states in order and normalises the method" do
     i =
       HTTP.interaction("get user")
