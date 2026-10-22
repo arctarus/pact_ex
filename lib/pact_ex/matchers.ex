@@ -34,14 +34,15 @@ defmodule PactEx.Matchers do
   Matches a list in which every element looks like `value`.
 
   `value` is the example element. The list needs at least `:min` elements
-  (default `1`).
+  (default `1`). The example list repeats `value` `:min` times, because the
+  mock server does not pad it and would reject a shorter example.
 
   Raises `ArgumentError` if `:min` is not a positive integer, or if `opts`
   has any key other than `:min`. Raises `FunctionClauseError` if `opts` is
   not a list.
 
       iex> PactEx.Matchers.each_like("x", min: 2)
-      %{"pact:matcher:type" => "type", "value" => ["x"], "min" => 2}
+      %{"pact:matcher:type" => "type", "value" => ["x", "x"], "min" => 2}
   """
   @spec each_like(term(), min: pos_integer()) :: t()
   def each_like(value, opts \\ [min: 1]) when is_list(opts) do
@@ -51,13 +52,16 @@ defmodule PactEx.Matchers do
       raise ArgumentError, "expected :min to be a positive integer, got: #{inspect(min)}"
     end
 
-    %{"pact:matcher:type" => "type", "value" => [value], "min" => min}
+    %{"pact:matcher:type" => "type", "value" => List.duplicate(value, min), "min" => min}
   end
 
   @doc """
   Matches a string against the regular expression `pattern`.
 
   `value` is the example string. It should match `pattern`.
+
+  `value` is typed `term()` and not guarded, because regex rules also apply to
+  path and query values, and pact_ffi matches those on their string form.
 
       iex> PactEx.Matchers.regex("male", "(male|female)")
       %{"pact:matcher:type" => "regex", "value" => "male", "regex" => "(male|female)"}
@@ -70,7 +74,7 @@ defmodule PactEx.Matchers do
   @doc """
   Matches a map whose keys all match the regular expression `pattern`.
 
-  `value` is the example map.
+  `value` is the example map. Raises `FunctionClauseError` if it is not a map.
 
       iex> PactEx.Matchers.each_key(%{"happy" => true}, "(happy|ferocious)")
       %{
@@ -79,8 +83,8 @@ defmodule PactEx.Matchers do
         "rules" => [%{"pact:matcher:type" => "regex", "regex" => "(happy|ferocious)"}]
       }
   """
-  @spec each_key(term(), String.t()) :: t()
-  def each_key(value, pattern) when is_binary(pattern) do
+  @spec each_key(map(), String.t()) :: t()
+  def each_key(value, pattern) when is_map(value) and is_binary(pattern) do
     %{
       "pact:matcher:type" => "eachKey",
       "value" => value,
@@ -100,13 +104,17 @@ defmodule PactEx.Matchers do
   end
 
   @doc """
-  Matches any decimal number. `value` is the example, a float or an integer.
+  Matches any decimal number. `value` is the example and must be a float.
+
+  Integers are rejected: pact_matching checks decimals with a float test, and
+  an integer such as `2` encodes as `2`, which fails its own rule. Use
+  `2.0`.
 
       iex> PactEx.Matchers.decimal(1.5)
       %{"pact:matcher:type" => "decimal", "value" => 1.5}
   """
-  @spec decimal(number()) :: t()
-  def decimal(value) when is_number(value) do
+  @spec decimal(float()) :: t()
+  def decimal(value) when is_float(value) do
     %{"pact:matcher:type" => "decimal", "value" => value}
   end
 
@@ -122,7 +130,7 @@ defmodule PactEx.Matchers do
   end
 
   @doc """
-  Matches a date or time string in the given Java `SimpleDateFormat` `format`.
+  Matches a date or time string in the given Java `DateTimeFormatter` `format`.
 
   `value` is the example string. It should follow `format`.
 

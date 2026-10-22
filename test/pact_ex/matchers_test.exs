@@ -26,6 +26,16 @@ defmodule PactEx.MatchersTest do
       assert each_like("x", min: 2)["min"] == 2
     end
 
+    test "default min gives a single-element example" do
+      assert each_like("x")["value"] == ["x"]
+      assert each_like("x", min: 1)["value"] == ["x"]
+    end
+
+    test "repeats the example min times so it satisfies its own rule" do
+      assert each_like("x", min: 3)["value"] == ["x", "x", "x"]
+      assert each_like(like(1), min: 2)["value"] == List.duplicate(like(1), 2)
+    end
+
     test "rejects a min below 1" do
       for min <- [0, -1] do
         assert_raise ArgumentError, ~r/min/, fn -> each_like("x", min: bad(min)) end
@@ -76,6 +86,12 @@ defmodule PactEx.MatchersTest do
         assert_raise FunctionClauseError, fn -> each_key(%{"a" => 1}, bad(pattern)) end
       end
     end
+
+    test "rejects a non-map value" do
+      for value <- ["happy", 1, nil, [{"happy", true}]] do
+        assert_raise FunctionClauseError, fn -> each_key(bad(value), "happy") end
+      end
+    end
   end
 
   describe "integer/1" do
@@ -91,9 +107,12 @@ defmodule PactEx.MatchersTest do
   end
 
   describe "decimal/1" do
-    test "builds a decimal matcher from a float or an integer" do
+    test "builds a decimal matcher from a float" do
       assert decimal(1.5) == %{"pact:matcher:type" => "decimal", "value" => 1.5}
-      assert decimal(2) == %{"pact:matcher:type" => "decimal", "value" => 2}
+    end
+
+    test "rejects an integer, which would encode as 2 and fail the decimal rule" do
+      assert_raise FunctionClauseError, fn -> decimal(bad(2)) end
     end
 
     test "rejects a non-number" do
