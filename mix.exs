@@ -1,0 +1,47 @@
+defmodule PactEx.MixProject do
+  use Mix.Project
+
+  @version "0.1.0"
+  @source_url "https://github.com/arctarus/pact_ex"
+
+  def project do
+    [
+      app: :pact_ex,
+      version: @version,
+      elixir: "~> 1.18",
+      elixirc_paths: elixirc_paths(Mix.env()),
+      start_permanent: Mix.env() == :prod,
+      deps: deps(),
+      description: "Pact contract testing for Elixir, built on the pact_ffi Rust library.",
+      package: package(),
+      source_url: @source_url
+    ]
+  end
+
+  def application do
+    [
+      extra_applications: [:logger]
+    ]
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
+
+  defp deps do
+    [
+      {:rustler_precompiled, "~> 0.10"},
+      {:rustler, "~> 0.38", optional: true},
+      {:req, "~> 0.5", only: :test},
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"GitHub" => @source_url},
+      files:
+        ~w(lib native/pact_ex_nif/src native/pact_ex_nif/Cargo.toml native/pact_ex_nif/Cargo.lock native/pact_ex_nif/.cargo checksum-*.exs mix.exs README.md CHANGELOG.md LICENSE)
+    ]
+  end
+end
