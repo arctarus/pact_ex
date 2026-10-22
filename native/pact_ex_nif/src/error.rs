@@ -27,7 +27,9 @@ fn read_message(buffer: &mut [c_char]) -> c_int {
 
 /// Drains any stale message left in the thread-local by an earlier call.
 pub fn clear_error() {
-    let mut scratch = vec![0 as c_char; ERROR_BUFFER_LEN];
+    // `pactffi_get_error_message` takes the message out of the thread-local
+    // before it checks the buffer size, so a one-byte buffer drains it too.
+    let mut scratch = [0 as c_char; 1];
     read_message(&mut scratch);
 }
 
@@ -127,6 +129,19 @@ mod tests {
         assert_eq!(error.function, "pactffi_given_with_params");
         assert_eq!(error.code, 2);
         assert!(error.message.contains("expected"), "{}", error.message);
+    }
+
+    #[test]
+    fn clear_error_drains_a_pending_message() {
+        let code = fail_given_with_params();
+        assert_eq!(code, 2);
+
+        clear_error();
+        let error = last_error("pactffi_given_with_params", code);
+        assert_eq!(
+            error.message,
+            "pactffi_given_with_params failed with code 2"
+        );
     }
 
     #[test]
