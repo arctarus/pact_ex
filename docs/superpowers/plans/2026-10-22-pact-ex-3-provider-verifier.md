@@ -1,0 +1,647 @@
+# pact_ex — Plan 3: Provider Verifier Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> **Status:** Written before plans 1 and 2 were implemented. Review it against the real code before executing. Task 1 is a decision gate. If its outcome is "stop", the rest of this plan is revised before anyone continues.
+
+**Goal:** Verify a provider against pacts from files, directories, URLs or a Pact Broker, from ExUnit or a plain function. Supported:
+- HTTP providers, with provider states handled by an Elixir callback.
+- Message providers, with message contents produced by Elixir functions.
+- Plugin transports such as gRPC.
+- Publishing verification results.
+
+pact_erlang parity for `pact_verifier`, plus transports.
+
+**Architecture:**
+- **One native call.** A single DirtyIo NIF, `PactEx.Native.verify/1`, takes a config map. On one large-stack thread it builds the `VerifierHandle`, applies every setting, executes, reads the JSON report and output, and shuts the handle down. No verifier handle ever reaches Elixir, so there is no resource lifecycle or cross-thread handle to manage.
+- **Internal endpoint.** Provider-state callbacks and message providers are served by `PactEx.Verifier.Endpoint`, a Plug on Bandit bound to `127.0.0.1:0`. It runs only for the duration of `verify/1`, and the verifier calls it over HTTP: `POST /_pact/state` and the `message` transport at `/_pact/messages`.
+
+**Tech Stack:** Plans 1–2 stack, plus `plug` ~> 1.18 and `bandit` ~> 1.6 as optional deps, and Docker (`pactfoundation/pact-broker`) for broker tests.
+
+**Spec:** `docs/superpowers/specs/2026-10-22-pact-ex-design.md`
+
+## Global Constraints
+
+- Every plan 1 and plan 2 Global Constraint applies.
+- `verify/1` NIF: `schedule = "DirtyIo"`, and the whole body inside `on_large_stack`. Always call `pactffi_verifier_shutdown`, even when a setup call fails.
+- Free the strings returned by `pactffi_verifier_json` and `pactffi_verifier_output` (with `strip_ansi = 1`) with `pactffi_string_delete`.
+- If an external process is ever needed (Task 1 outcome), launch it with an Elixir `Port`. Never use C `fork`/`exec` from a NIF.
+- `plug` and `bandit` are `optional: true`. `PactEx.Verifier.verify/1` raises a clear error naming the missing dep only when `state_handler` or `message_providers` is given without them.
+- Wire formats fixed by `pact_verifier` (`callback_executors.rs` and `messages.rs`):
+  - The state change request is `POST` with a JSON body `{"state": String, "params": Object, "action": "setup" | "teardown"}`.
+  - The message request is `POST` with a JSON body `{"description": String, "providerStates": [{"name": String, "params": Object}]}`.
+  - The message response body holds the contents with their `content-type`. Metadata goes in the `Pact-Message-Metadata` header as base64-encoded JSON.
+- Broker tests are tagged `:broker` and excluded unless `PACT_BROKER_URL` is set. Plugin tests keep plan 2's `:plugin` rule.
+- Test broker: `test/support/docker-compose.yml` runs `pactfoundation/pact-broker` on port 9292 with `PACT_BROKER_DATABASE_ADAPTER=sqlite` and `PACT_BROKER_DATABASE_NAME=/tmp/pact_broker.sqlite3`. Health check: `GET /diagnostic/status/heartbeat`.
+
+## Review Focus
+
+1. **The state handler raises or returns an error.** The verification fails with that interaction marked as an error and the handler's message in the report. The BEAM keeps running and the endpoint is stopped. Tested in Task 3.
+2. **No message provider for a description.** If a `fallback` is configured, it is used. Otherwise the endpoint answers 404 and the report names the missing description. Tested in Task 4.
+3. **No pacts found.** With `no_pacts_is_error: true` (the default) the result is `{:error, %VerificationError{}}`. With `false` it is `:ok`. Tested in Task 3.
+4. **The provider is unreachable.** Pointing at a closed port returns `{:error, %VerificationError{}}` within `request_timeout` and does not hang. Tested in Task 3.
+5. **Publishing without `provider_version`.** Option validation raises `ArgumentError` before any native call. Tested in Task 5.
+
+---
+
+### Task 1: `verify` NIF and the Linux segfault spike (decision gate)
+
+**Files:**
+- Create: `native/pact_ex_nif/src/verifier.rs`, `test/support/docker-compose.yml`, `test/spike/verifier_segfault.exs` (deleted at the end of this task)
+- Modify: `native/pact_ex_nif/src/lib.rs`, `lib/pact_ex/native.ex`, `docs/superpowers/specs/2026-10-22-pact-ex-design.md` (add a "Spike results" section)
+- Test: `test/pact_ex/native/verifier_test.exs`
+
+**Interfaces:**
+- Consumes (plan 1): `FfiError`, `clear_error`, `last_error`, `to_cstring`, `on_large_stack`. Plan 1 `PactEx.Consumer.run/4` generates fixture pacts.
+- Produces:
+  - `PactEx.Native.verify(config :: map()) :: {:ok, %{exit_code: integer(), json: String.t(), output: String.t()}} | {:error, map()}` (DirtyIo)
+  - The Rust `#[derive(NifMap)] VerifyConfig` fields, all required in the map (Elixir fills in defaults):
+    - `app_version: String`
+    - `provider_name: String`, `provider_scheme: String`, `provider_host: String`, `provider_port: u16` (0 = none), `provider_path: String`
+    - `transports: Vec<TransportConfig { protocol: String, port: u16, path: Option<String>, scheme: Option<String> }>`
+    - `filter_description: Option<String>`, `filter_state: Option<String>`, `filter_no_state: bool`
+    - `state_change_url: Option<String>`, `state_change_teardown: bool`
+    - `disable_ssl_verification: bool`, `request_timeout_ms: u64`
+    - `publish: Option<PublishConfig { provider_version: String, build_url: Option<String>, provider_tags: Vec<String>, provider_branch: Option<String> }>`
+    - `consumer_filters: Vec<String>`
+    - `custom_headers: Vec<HeaderConfig { name: String, value: String }>`
+    - `files: Vec<String>`, `dirs: Vec<String>`
+    - `urls: Vec<UrlSourceConfig { url: String, username: Option<String>, password: Option<String>, token: Option<String> }>`
+    - `broker: Option<BrokerConfig { url: String, username: Option<String>, password: Option<String>, token: Option<String>, enable_pending: bool, include_wip_pacts_since: Option<String>, provider_tags: Vec<String>, provider_branch: Option<String>, consumer_version_selectors: Vec<String>, consumer_version_tags: Vec<String> }>`
+    - `no_pacts_is_error: bool`
+
+    `consumer_version_selectors` entries are JSON strings.
+
+- [ ] **Step 1: Write the failing native test**
+
+```elixir
+# test/pact_ex/native/verifier_test.exs
+defmodule PactEx.Native.VerifierTest do
+  use ExUnit.Case, async: false
+  alias PactEx.{Consumer, HTTP, Native}
+
+  @moduletag :tmp_dir
+
+  defp base_config(overrides) do
+    Map.merge(
+      %{app_version: "0.0.0", provider_name: "verifier-provider", provider_scheme: "http", provider_host: "127.0.0.1",
+        provider_port: 0, provider_path: "/", transports: [], filter_description: nil, filter_state: nil,
+        filter_no_state: false, state_change_url: nil, state_change_teardown: false, disable_ssl_verification: false,
+        request_timeout_ms: 5_000, publish: nil, consumer_filters: [], custom_headers: [], files: [], dirs: [],
+        urls: [], broker: nil, no_pacts_is_error: true},
+      overrides
+    )
+  end
+
+  test "verifies a file pact against a running provider", %{tmp_dir: dir} do
+    pact = PactEx.new("verifier-consumer", "verifier-provider", pact_dir: dir)
+    i = HTTP.interaction("ping") |> HTTP.with_request(:get, "/ping") |> HTTP.will_respond_with(200, body: "pong", content_type: "text/plain")
+    :ok = Consumer.run(pact, [i], fn m -> Req.get!(m.url <> "/ping") end)
+
+    # Reuse a plan 1 mock server as a stand-in provider that answers /ping.
+    {:ok, provider} = Consumer.start_mock_server(PactEx.new("x", "y"), [i])
+
+    try do
+      assert {:ok, %{exit_code: 0, json: json}} =
+               Native.verify(base_config(%{provider_port: provider.port, files: [Path.join(dir, "verifier-consumer-verifier-provider.json")]}))
+
+      assert JSON.decode!(json)["result"] == true
+    after
+      PactEx.MockServer.stop(provider)
+    end
+  end
+
+  test "no pacts is an error by default" do
+    assert {:ok, %{exit_code: code}} = Native.verify(base_config(%{dirs: [System.tmp_dir!() <> "/pact-ex-empty-#{System.unique_integer([:positive])}"]}))
+    assert code != 0
+  end
+end
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `mix test test/pact_ex/native/verifier_test.exs`
+Expected: FAIL with `PactEx.Native.verify/1 is undefined or private`.
+
+- [ ] **Step 3: Implement `verifier.rs`**
+
+One `#[rustler::nif(schedule = "DirtyIo")] fn verify(config: VerifyConfig)`. Inside `on_large_stack`, call in this order:
+1. `pactffi_verifier_new_for_application("pact_ex", app_version)` and `set_provider_info`.
+2. `add_provider_transport` for each transport.
+3. `set_filter_info`, but only when a filter is set.
+4. `set_provider_state(url, teardown, 1)`, but only when `state_change_url` is set.
+5. `set_verification_options`, `set_publish_options` (only if `publish` is set), `set_consumer_filters`, `add_custom_header` for each header, then the file, directory and URL sources, `broker_source_with_selectors` (only if `broker` is set), and `set_no_pacts_is_error`.
+6. `execute`, then `json`, then `output`.
+7. `shutdown`.
+
+A non-zero return from any `int`-returning setter returns `{:error, last_error(<fn>, c)}` after `shutdown`. Build the `const char *const *` arrays from a `Vec<CString>` that stays alive for the whole call.
+
+Temporary, for the spike only: if the env var `PACT_EX_VERIFIER_STACK=caller` is set, run the body directly on the dirty scheduler thread instead of `on_large_stack`.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `mix test test/pact_ex/native/verifier_test.exs`
+Expected: PASS (2 tests).
+
+- [ ] **Step 5: Run the segfault spike on Linux**
+
+`test/spike/verifier_segfault.exs` is a script run with `mix run`:
+1. Generate an HTTP pact with `Consumer.run/4`.
+2. Publish it with Req: `PUT $PACT_BROKER_URL/pacts/provider/spike-provider/consumer/spike-consumer/version/1.0.0`.
+3. Start a stand-in provider (a plan 1 mock server).
+4. Call `Native.verify/1` with `broker: %{url: ..., consumer_version_selectors: [~s({"latest": true})], ...}` and print the exit code.
+
+Run on Linux x86_64:
+
+```bash
+docker compose -f test/support/docker-compose.yml up -d --wait
+export PACT_BROKER_URL=http://localhost:9292
+for i in 1 2 3 4 5; do PACT_EX_VERIFIER_STACK=caller mix run test/spike/verifier_segfault.exs; echo "caller exit=$?"; done
+for i in 1 2 3 4 5; do mix run test/spike/verifier_segfault.exs; echo "large exit=$?"; done
+```
+
+A segfault shows as exit status 139.
+
+- [ ] **Step 6: Apply the decision gate and record it**
+
+Add a "Spike results (plan 3, Task 1)" section to the spec, with the 10 exit codes, the OS/arch and the decision:
+- **`caller` crashes and `large` passes:** the hypothesis is confirmed. Remove the `PACT_EX_VERIFIER_STACK` branch and continue.
+- **Neither crashes:** the crash can't be reproduced on `pact_ffi` 0.5.12. Remove the branch, keep the large stack (it costs almost nothing), and continue.
+- **`large` crashes:** **STOP.** Do not continue with Task 2. Report to the user. The plan must be revised to run verification in a separate OS process launched with `Port`.
+
+Delete `test/spike/`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add -A
+git commit -m "feat(native): add one-shot verify NIF; record verifier segfault spike results"
+```
+
+---
+
+### Task 2: Internal endpoint for provider states and message providers
+
+**Files:**
+- Create: `lib/pact_ex/verifier/endpoint.ex`, `lib/pact_ex/verifier/endpoint_server.ex`
+- Modify: `mix.exs` (`{:plug, "~> 1.18", optional: true}` and `{:bandit, "~> 1.6", optional: true}`)
+- Test: `test/pact_ex/verifier/endpoint_test.exs`
+
+**Interfaces:**
+- Produces:
+  - `PactEx.Verifier.Endpoint`, a Plug. `init/1` takes `%{state_handler: fun | nil, message_providers: %{String.t() => fun}, fallback: fun | nil}`.
+    - `POST /_pact/state` calls `state_handler.(state, params, action)`, where `action` is `:setup | :teardown`.
+      - Return `:ok` → 200 `{}`.
+      - Return `{:ok, map}` → 200 with the map as JSON. The verifier injects those values into the requests.
+      - Return `{:error, reason}`, or a raise → 500 with `{"error": inspect(reason)}`.
+    - `POST /_pact/messages` looks up `message_providers[description]`, falling back to `fallback`. It calls the function with `provider_states :: [%{name: String.t(), params: map()}]`.
+      - The function returns `{contents, metadata}` or `contents`. A map/list is sent as `application/json`. A `{binary, content_type}` tuple is sent raw with that content type.
+      - Metadata goes in the `Pact-Message-Metadata` header as `Base.encode64(JSON.encode!(metadata))`.
+      - With no provider and no fallback → 404 `{"error": "no message provider for <description>"}`.
+  - `PactEx.Verifier.EndpointServer.start(opts) :: {:ok, %{pid: pid(), port: pos_integer()}}` starts Bandit on `127.0.0.1` port 0 and reads the bound port via `ThousandIsland.listener_info/1`.
+  - `PactEx.Verifier.EndpointServer.stop(server) :: :ok`
+
+- [ ] **Step 1: Write the failing tests (Plug.Test, no NIF)**
+
+```elixir
+# test/pact_ex/verifier/endpoint_test.exs
+defmodule PactEx.Verifier.EndpointTest do
+  use ExUnit.Case, async: true
+  import Plug.Test
+  import Plug.Conn
+  alias PactEx.Verifier.Endpoint
+
+  defp call(opts, path, body) do
+    conn(:post, path, JSON.encode!(body)) |> put_req_header("content-type", "application/json") |> Endpoint.call(Endpoint.init(opts))
+  end
+
+  test "state setup passes state, params and action" do
+    parent = self()
+    handler = fn state, params, action -> send(parent, {state, params, action}); {:ok, %{"id" => 7}} end
+    conn = call(%{state_handler: handler}, "/_pact/state", %{"state" => "user exists", "params" => %{"a" => 1}, "action" => "setup"})
+    assert conn.status == 200
+    assert JSON.decode!(conn.resp_body) == %{"id" => 7}
+    assert_received {"user exists", %{"a" => 1}, :setup}
+  end
+
+  test "a raising state handler returns 500" do
+    conn = call(%{state_handler: fn _, _, _ -> raise "nope" end}, "/_pact/state", %{"state" => "s", "params" => %{}, "action" => "setup"})
+    assert conn.status == 500
+    assert conn.resp_body =~ "nope"
+  end
+
+  test "message provider returns JSON contents and base64 metadata header" do
+    providers = %{"weather" => fn [%{name: "cold"}] -> {%{"temp" => 1}, %{"queue" => "w"}} end}
+    conn = call(%{message_providers: providers}, "/_pact/messages", %{"description" => "weather", "providerStates" => [%{"name" => "cold", "params" => %{}}]})
+    assert conn.status == 200
+    assert JSON.decode!(conn.resp_body) == %{"temp" => 1}
+    [meta] = get_resp_header(conn, "pact-message-metadata")
+    assert meta |> Base.decode64!() |> JSON.decode!() == %{"queue" => "w"}
+  end
+
+  test "unknown description uses fallback, else 404" do
+    assert call(%{message_providers: %{}, fallback: fn _ -> %{"f" => true} end}, "/_pact/messages", %{"description" => "x"}).status == 200
+    assert call(%{message_providers: %{}}, "/_pact/messages", %{"description" => "x"}).status == 404
+  end
+
+  test "binary contents keep their content type" do
+    providers = %{"bin" => fn _ -> {<<1, 2>>, "application/octet-stream"} end}
+    conn = call(%{message_providers: providers}, "/_pact/messages", %{"description" => "bin"})
+    assert conn.resp_body == <<1, 2>>
+    assert get_resp_header(conn, "content-type") |> hd() =~ "application/octet-stream"
+  end
+end
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `mix test test/pact_ex/verifier/endpoint_test.exs`
+Expected: FAIL with `module PactEx.Verifier.Endpoint is not available`.
+
+- [ ] **Step 3: Implement `Endpoint` and `EndpointServer`** as listed in Interfaces. Use `Plug.Router` with `Plug.Parsers` (`:json` with `json_decoder: JSON`).
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `mix test test/pact_ex/verifier/endpoint_test.exs`
+Expected: PASS (5 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat: add internal endpoint for provider states and message providers"
+```
+
+---
+
+### Task 3: `PactEx.Verifier.verify/1` for HTTP providers
+
+**Files:**
+- Create: `lib/pact_ex/verifier.ex`, `lib/pact_ex/verifier/options.ex`, `lib/pact_ex/verification_error.ex`, `test/support/animal_provider.ex`
+- Test: `test/pact_ex/verifier_test.exs`, `test/acceptance/http_provider_test.exs`
+
+**Interfaces:**
+- Consumes: Task 1 `Native.verify/1`, Task 2 `EndpointServer`, plan 1 consumer API (to generate fixtures), plan 1 `AnimalClient` fixtures.
+- Produces:
+  - `PactEx.Verifier.verify(opts :: keyword()) :: :ok | {:error, PactEx.VerificationError.t()}`
+  - `PactEx.Verifier.verify!(opts) :: :ok`
+  - `PactEx.VerificationError` exception with fields `exit_code :: integer()`, `report :: map()` (the decoded verifier JSON) and `output :: String.t()`. `message/1` lists each failing interaction's `description` and mismatch summary from `report["errors"]`.
+  - `PactEx.Verifier.Options.to_native(opts, endpoint_port :: pos_integer() | nil) :: map()` validates the opts with `Keyword.validate!/2` and produces exactly the `VerifyConfig` map from Task 1.
+  - Opts and defaults:
+    - `provider` (required)
+    - `provider_url` (default `"http://localhost"`, parsed with `URI.parse/1` into scheme/host/port/path)
+    - `transports` (`[%{protocol, port, path, scheme}]`, default `[]`)
+    - `files`, `dirs`, `urls`
+    - `broker` (keyword, see Task 5)
+    - `state_handler` (3-arity fun) or `state_change_url` (string); giving both raises `ArgumentError`
+    - `state_change_teardown` (default `false`)
+    - `message_providers` (map, default `%{}`), `fallback_message_provider`
+    - `filter_description`, `filter_state`, `filter_no_state` (default `false`)
+    - `consumers` (default `[]`)
+    - `custom_headers` (map, default `%{}`)
+    - `request_timeout` (ms, default `5_000`)
+    - `disable_ssl_verification` (default `false`)
+    - `publish` (default `false`), `provider_version`, `provider_branch`, `provider_tags` (default `[]`), `build_url`
+    - `no_pacts_is_error` (default `true`)
+
+    With `state_handler`, `state_change_url` becomes `http://127.0.0.1:<endpoint>/_pact/state` and teardown follows the option. `app_version` is pact_ex's own version.
+  - `verify/1` behaviour:
+    1. Start `EndpointServer` only when `state_handler` or message providers are present.
+    2. Call `Native.verify/1`.
+    3. Always stop the endpoint (`try/after`).
+    4. Exit code 0 → `:ok`. Otherwise → `{:error, %VerificationError{}}`. A native `{:error, map}` raises `PactEx.Error`.
+
+- [ ] **Step 1: Write the failing tests**
+
+`test/support/animal_provider.ex` is a `Plug.Router` that implements the four animal endpoints from plan 1's acceptance suite:
+- `GET /animals/:name`: 200 JSON for names in an Agent-backed store, 404 `{"error":"not_found"}` otherwise.
+- `POST /animals`: 201.
+- `GET /animals?type=`: 200 `{"animals": [...]}`.
+
+`AnimalProvider.start() :: {:ok, %{port: p, store: agent}}` serves it with Bandit on port 0.
+
+```elixir
+# test/acceptance/http_provider_test.exs
+defmodule PactEx.Acceptance.HttpProviderTest do
+  use ExUnit.Case, async: false
+  alias PactEx.Verifier
+
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} do
+    # Generate the consumer pact with the plan 1 acceptance interactions (extract them into
+    # test/support/animal_interactions.ex so both suites share them).
+    :ok = AnimalInteractions.write_consumer_pact(dir)
+    {:ok, provider} = AnimalProvider.start()
+    on_exit(fn -> AnimalProvider.stop(provider) end)
+    %{dir: dir, provider: provider}
+  end
+
+  test "verifies the animal pact with a state handler", %{dir: dir, provider: p} do
+    handler = fn
+      "an alligator with the name Mary exists", _params, :setup -> AnimalProvider.put(p, %{"name" => "Mary", "type" => "alligator"})
+      _state, _params, _action -> :ok
+    end
+
+    assert :ok = Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir], state_handler: handler)
+  end
+
+  test "a failing state handler fails verification without crashing", %{dir: dir, provider: p} do
+    assert {:error, %PactEx.VerificationError{report: report}} =
+             Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir],
+               state_handler: fn _, _, _ -> {:error, :db_down} end)
+
+    assert report["result"] == false
+  end
+end
+```
+
+```elixir
+# test/pact_ex/verifier_test.exs
+defmodule PactEx.VerifierTest do
+  use ExUnit.Case, async: true
+  alias PactEx.Verifier
+  alias PactEx.Verifier.Options
+
+  test "options map onto the native config" do
+    config = Options.to_native([provider: "p", provider_url: "https://api.local:8443/base", files: ["a.json"], consumers: ["c"]], nil)
+    assert %{provider_name: "p", provider_scheme: "https", provider_host: "api.local", provider_port: 8443, provider_path: "/base", files: ["a.json"], consumer_filters: ["c"], state_change_url: nil} = config
+  end
+
+  test "state_handler and state_change_url are mutually exclusive" do
+    assert_raise ArgumentError, fn -> Options.to_native([provider: "p", state_handler: fn _, _, _ -> :ok end, state_change_url: "http://x"], 1) end
+  end
+
+  test "no pacts: error by default, ok when disabled" do
+    empty = Path.join(System.tmp_dir!(), "pact-ex-empty-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(empty)
+    assert {:error, %PactEx.VerificationError{}} = Verifier.verify(provider: "p", dirs: [empty])
+    assert :ok = Verifier.verify(provider: "p", dirs: [empty], no_pacts_is_error: false)
+  end
+
+  @tag :tmp_dir
+  test "an unreachable provider fails within the request timeout", %{tmp_dir: dir} do
+    :ok = AnimalInteractions.write_consumer_pact(dir)
+    {micros, result} = :timer.tc(fn -> Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:1", dirs: [dir], request_timeout: 1_000) end)
+    assert {:error, %PactEx.VerificationError{}} = result
+    assert micros < 30_000_000
+  end
+end
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `mix test test/pact_ex/verifier_test.exs test/acceptance/http_provider_test.exs`
+Expected: FAIL with `PactEx.Verifier.Options.to_native/2 is undefined`.
+
+- [ ] **Step 3: Implement `Options`, `VerificationError` and `Verifier`** as listed in Interfaces. Extract `AnimalInteractions` from plan 1's `test/acceptance/http_end_to_end_test.exs`, and update that test to use it.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `mix test test/pact_ex/verifier_test.exs test/acceptance`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat: add provider verifier for HTTP providers with state handler"
+```
+
+---
+
+### Task 4: Message provider verification
+
+**Files:**
+- Modify: `lib/pact_ex/verifier.ex`, `lib/pact_ex/verifier/options.ex`
+- Test: `test/acceptance/message_provider_test.exs`
+
+**Interfaces:**
+- Consumes: Task 3 `verify/1`, Task 2 endpoint, plan 2 `PactEx.Message.run/4` (fixtures).
+- Produces: when `message_providers` or `fallback_message_provider` is given, `to_native/2` appends the transport `%{protocol: "message", port: endpoint_port, path: "/_pact/messages", scheme: "http"}`.
+
+- [ ] **Step 1: Write the failing test**
+
+```elixir
+# test/acceptance/message_provider_test.exs
+defmodule PactEx.Acceptance.MessageProviderTest do
+  use ExUnit.Case, async: false
+  import PactEx.Matchers
+  alias PactEx.{Message, Verifier}
+
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} do
+    pact = PactEx.new("animal_service", "weather_service", pact_dir: dir)
+    msg = Message.new("a weather data message") |> Message.given("weather data for animals") |> Message.with_contents(%{"temperature" => like(23.0)}) |> Message.with_metadata(%{"queue" => "weather"})
+    :ok = Message.run(pact, msg, fn _ -> :ok end)
+    %{dir: dir}
+  end
+
+  test "verifies messages produced by Elixir functions", %{dir: dir} do
+    providers = %{"a weather data message" => fn [%{name: "weather data for animals"}] -> {%{"temperature" => 19.5}, %{"queue" => "weather"}} end}
+    assert :ok = Verifier.verify(provider: "weather_service", dirs: [dir], message_providers: providers)
+  end
+
+  test "a wrong message shape fails verification", %{dir: dir} do
+    providers = %{"a weather data message" => fn _ -> {%{"temperature" => "hot"}, %{"queue" => "weather"}} end}
+    assert {:error, %PactEx.VerificationError{}} = Verifier.verify(provider: "weather_service", dirs: [dir], message_providers: providers)
+  end
+
+  test "a missing provider without fallback fails and names the description", %{dir: dir} do
+    assert {:error, %PactEx.VerificationError{} = e} = Verifier.verify(provider: "weather_service", dirs: [dir], message_providers: %{})
+    assert Exception.message(e) =~ "a weather data message"
+  end
+end
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `mix test test/acceptance/message_provider_test.exs`
+Expected: FAIL. With no message transport configured, the verifier sends the message request to the HTTP provider URL, and verification fails.
+
+- [ ] **Step 3: Implement the transport wiring** as listed in Interfaces.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `mix test test/acceptance/message_provider_test.exs`
+Expected: PASS (3 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat: verify message providers through the internal endpoint"
+```
+
+---
+
+### Task 5: Pact Broker source and publishing results
+
+**Files:**
+- Modify: `lib/pact_ex/verifier/options.ex`, `test/test_helper.exs` (exclude `:broker` unless `PACT_BROKER_URL` is set)
+- Create: `test/support/broker.ex` (Req helpers `publish_pact(path, consumer_version)` and `matrix(consumer, version)`)
+- Test: `test/acceptance/broker_test.exs`, plus a validation test in `test/pact_ex/verifier_test.exs`
+
+**Interfaces:**
+- Consumes: Task 3 `verify/1`, `Options.to_native/2`.
+- Produces: `broker` opts → `BrokerConfig`:
+  - `url` (required)
+  - `token`, or `username` + `password`
+  - `enable_pending` (default `false`), `include_wip_pacts_since`
+  - `consumer_version_selectors` (list of maps, each `JSON.encode!`d, default `[%{"mainBranch" => true}, %{"deployedOrReleased" => true}]`)
+  - `consumer_version_tags` (default `[]`)
+  - `provider_tags` and `provider_branch`, which come from the top-level opts
+
+  `publish: true` without `provider_version` raises `ArgumentError, "publish: true requires :provider_version"`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add this to `test/pact_ex/verifier_test.exs`:
+
+```elixir
+test "publish without provider_version is rejected before any native call" do
+  assert_raise ArgumentError, ~r/provider_version/, fn -> Options.to_native([provider: "p", publish: true, files: ["a.json"]], nil) end
+end
+```
+
+```elixir
+# test/acceptance/broker_test.exs
+defmodule PactEx.Acceptance.BrokerTest do
+  use ExUnit.Case, async: false
+  alias PactEx.Verifier
+
+  @moduletag :broker
+  @moduletag :tmp_dir
+
+  test "verifies pacts from the broker and publishes results", %{tmp_dir: dir} do
+    :ok = AnimalInteractions.write_consumer_pact(dir)
+    version = "1.0.#{System.unique_integer([:positive])}"
+    :ok = Broker.publish_pact(Path.join(dir, "animal_service_consumer-animal_service.json"), version)
+    {:ok, p} = AnimalProvider.start()
+
+    try do
+      handler = fn
+        "an alligator with the name Mary exists", _, :setup -> AnimalProvider.put(p, %{"name" => "Mary", "type" => "alligator"})
+        _, _, _ -> :ok
+      end
+
+      assert :ok =
+               Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", state_handler: handler,
+                 broker: [url: System.fetch_env!("PACT_BROKER_URL"), consumer_version_selectors: [%{"latest" => true}]],
+                 publish: true, provider_version: "2.0.0", provider_branch: "main")
+
+      assert [%{"verificationResult" => %{"success" => true}} | _] = Broker.matrix("animal_service_consumer", version)
+    after
+      AnimalProvider.stop(p)
+    end
+  end
+end
+```
+
+`Broker.matrix/2` calls `GET /matrix?q[][pacticipant]=<consumer>&q[][version]=<version>&latestby=cvp` and returns the `"matrix"` list.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `docker compose -f test/support/docker-compose.yml up -d --wait && PACT_BROKER_URL=http://localhost:9292 mix test test/acceptance/broker_test.exs test/pact_ex/verifier_test.exs`
+Expected: FAIL with `unknown keys [:broker]` or the missing `ArgumentError`.
+
+- [ ] **Step 3: Implement the broker and publish options** as listed in Interfaces.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: same command as Step 2.
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat: verify from Pact Broker and publish verification results"
+```
+
+---
+
+### Task 6: gRPC provider transport
+
+**Files:**
+- Create: `test/support/route_guide_server.ex` (a `GRPC.Server` implementing `GetFeature`)
+- Test: `test/acceptance/grpc_provider_test.exs`
+
+**Interfaces:**
+- Consumes: Task 3 `verify/1` with `transports`, the plan 2 `Routeguide.*` test modules, and the plan 2 gRPC consumer interactions (extract the Task 5 `get_feature/1` builder into `test/support/grpc_interactions.ex` so both suites share it).
+- Produces: nothing new in lib. This task proves that `transports` works with a plugin transport.
+
+- [ ] **Step 1: Write the test**
+
+```elixir
+# test/acceptance/grpc_provider_test.exs
+defmodule PactEx.Acceptance.GrpcProviderTest do
+  use ExUnit.Case, async: false
+
+  @moduletag :plugin
+  @moduletag :tmp_dir
+
+  test "verifies the gRPC pact against an Elixir gRPC server", %{tmp_dir: dir} do
+    :ok = GrpcInteractions.write_consumer_pact(dir)
+    {:ok, server_pid, port} = GRPC.Server.start(RouteGuideServer, 0)
+
+    try do
+      assert :ok =
+               PactEx.Verifier.verify(provider: "grpcprovider", provider_url: "http://127.0.0.1:#{port}",
+                 transports: [%{protocol: "grpc", port: port}], dirs: [dir])
+    after
+      GRPC.Server.stop(RouteGuideServer)
+      _ = server_pid
+    end
+  end
+end
+```
+
+`RouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "Big Tree", location: point}` for `(180, 200)`, and raises `GRPC.RPCError.exception(status: :not_found, message: "no feature was found")` for `(-1, -1)`.
+
+- [ ] **Step 2: Run it**
+
+Run: `mix test test/acceptance/grpc_provider_test.exs`
+Expected: PASS. The verifier loads the protobuf plugin automatically from the pact's `metadata.plugins`. If it fails because the plugin is not loaded, check that the plugin directory resolution matches plan 2 (`PACT_PLUGIN_DIR`).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add -A
+git commit -m "test: verify gRPC provider via plugin transport"
+```
+
+---
+
+### Task 7: CI and docs for the verifier
+
+**Files:**
+- Modify: `.github/workflows/ci.yml`, `README.md`, `CHANGELOG.md`
+
+- [ ] **Step 1: Update `ci.yml`**
+
+On `ubuntu-latest` only, add a `services.pact-broker` container (`pactfoundation/pact-broker`, port 9292, sqlite env from Global Constraints, health check on `/diagnostic/status/heartbeat`) and set `PACT_BROKER_URL=http://localhost:9292`.
+
+- [ ] **Step 2: Update `README.md`**
+
+Add a "Verifying a provider" section that covers:
+- HTTP providers with a state handler
+- message providers
+- broker sources and publishing
+- gRPC transports
+- the `plug`/`bandit` optional deps
+
+Complete the parity table.
+
+- [ ] **Step 3: Verify**
+
+Run: `mix test && mix format --check-formatted && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy -- -D warnings)`
+Expected: all green.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "ci: run broker tests and document provider verification"
+```

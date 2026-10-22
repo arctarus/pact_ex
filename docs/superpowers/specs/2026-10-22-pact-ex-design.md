@@ -101,7 +101,8 @@ interaction =
    `docs/superpowers/plans/2026-10-22-pact-ex-1-core-http-consumer.md`
 2. **Messages + plugins**: async and sync messages, `using_plugin`, `interaction_contents`, gRPC mock
    transport, plugin cleanup. Acceptance test: the pact-go `examples/grpc` RouteGuide consumer.
-3. **Provider verifier**: starts with a spike that reproduces the PR #49 segfault on `pact_ffi` 0.5.12 and
+   `docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins.md`
+3. **Provider verifier** (`docs/superpowers/plans/2026-10-22-pact-ex-3-provider-verifier.md`): starts with a spike that reproduces the PR #49 segfault on `pact_ffi` 0.5.12 and
    checks the large-stack mitigation. If an external process is still needed, it is launched via an Elixir
    `Port`, never with C `fork`. Then: file, directory and broker sources, state change URL, message
    providers over an internal Plug endpoint, publish options, and provider transports.
