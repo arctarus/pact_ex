@@ -33,6 +33,12 @@ pub fn clear_error() {
     read_message(&mut scratch);
 }
 
+/// The message used when `pact_ffi` stored none. Callers that want a better
+/// message compare against this, instead of guessing from the wording.
+pub fn fallback_message(function: &str, code: i64) -> String {
+    format!("{function} failed with code {code}")
+}
+
 /// Builds an [`FfiError`] from the message stored for `function`, falling back
 /// to a generic message when there is none.
 pub fn last_error(function: &str, code: i64) -> FfiError {
@@ -53,7 +59,7 @@ fn last_error_with_capacity(function: &str, code: i64, capacity: usize) -> FfiEr
         format!("{function} failed with code {code} (error message too long to read)")
     } else {
         // 1 means an empty message: only the trailing NUL was written.
-        format!("{function} failed with code {code}")
+        fallback_message(function, code)
     };
 
     FfiError {
@@ -149,6 +155,13 @@ mod tests {
         clear_error();
         let error = last_error("pactffi_given", 1);
         assert_eq!(error.message, "pactffi_given failed with code 1");
+    }
+
+    #[test]
+    fn fallback_message_is_what_last_error_returns_without_a_message() {
+        clear_error();
+        let error = last_error("pactffi_given", 1);
+        assert_eq!(error.message, fallback_message("pactffi_given", 1));
     }
 
     #[test]

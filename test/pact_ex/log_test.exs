@@ -17,6 +17,10 @@ defmodule PactEx.LogTest do
       assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, 123}) end
       assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, ""}) end
       assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, <<255, 254>>}) end
+      assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, "   "}) end
+      assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, "\t\n"}) end
+      assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, " pact.log"}) end
+      assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: {:file, "pact.log "}) end
       assert_raise ArgumentError, ~r/sink/, fn -> Log.init(sink: "stdout") end
       assert_raise ArgumentError, fn -> Log.init(color: true) end
     end
@@ -89,6 +93,7 @@ defmodule PactEx.LogTest do
 
     :ok = PactEx.Consumer.run(pact, [i], fn m -> Req.get!(m.url <> "/l") end)
 
+    assert File.regular?(Path.join(dir, "log-consumer-log-provider.json"))
     assert File.read!(log) =~ "DEBUG"
     assert Log.init(level: :info) == {:error, :already_initialized}
 

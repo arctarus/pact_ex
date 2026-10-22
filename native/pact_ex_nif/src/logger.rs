@@ -12,7 +12,7 @@ use pact_ffi::log::{pactffi_logger_apply, pactffi_logger_attach_sink, pactffi_lo
 use rustler::{NifResult, NifUnitEnum, Term};
 
 use crate::args::decode_arg;
-use crate::error::{clear_error, last_error, to_cstring, FfiError, Outcome};
+use crate::error::{clear_error, fallback_message, last_error, to_cstring, FfiError, Outcome};
 use crate::stack::on_large_stack;
 
 const ATTACH: &str = "pactffi_logger_attach_sink";
@@ -74,8 +74,8 @@ fn apply_message(code: i64) -> Option<String> {
 fn failure(function: &str, code: c_int, describe: impl FnOnce(i64) -> Option<String>) -> Outcome {
     let code = i64::from(code);
     let mut error: FfiError = last_error(function, code);
-    // `last_error` falls back to a message that starts with the function name.
-    if error.message.starts_with(function) {
+    // Only replace the generic fallback, never a message `pact_ffi` stored.
+    if error.message == fallback_message(function, code) {
         if let Some(message) = describe(code) {
             error.message = message;
         }
@@ -138,6 +138,42 @@ mod tests {
     fn apply_message_covers_the_already_applied_code() {
         assert!(apply_message(-1).unwrap().contains("already applied"));
         assert!(apply_message(-2).is_none());
+    }
+
+    #[test]
+    fn failure_describes_a_known_code_when_pact_ffi_stored_nothing() {
+        clear_error();
+        let Outcome::Err(error) = failure(ATTACH, -6, |code| attach_message(code, "file /x"))
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(error.message, "could not open log file /x");
+    }
+
+    #[test]
+    fn failure_keeps_a_message_stored_by_pact_ffi() {
+        // Store a message the way pact_ffi does, via a failing call on this thread.
+        let code = {
+            use pact_ffi::mock_server::handles::{
+                pactffi_given_with_params, pactffi_new_interaction, pactffi_new_pact,
+            };
+            let consumer = std::ffi::CString::new("c").unwrap();
+            let provider = std::ffi::CString::new("p").unwrap();
+            let description = std::ffi::CString::new("d").unwrap();
+            let state = std::ffi::CString::new("s").unwrap();
+            let params = std::ffi::CString::new("not json").unwrap();
+            let pact = pactffi_new_pact(consumer.as_ptr(), provider.as_ptr());
+            let interaction = pactffi_new_interaction(pact, description.as_ptr());
+            clear_error();
+            pactffi_given_with_params(interaction, state.as_ptr(), params.as_ptr())
+        };
+        assert_eq!(code, 2);
+        let Outcome::Err(error) = failure(ATTACH, -6, |code| attach_message(code, "file /x"))
+        else {
+            panic!("expected an error");
+        };
+        assert_ne!(error.message, "could not open log file /x");
+        assert!(error.message.contains("expected"), "{}", error.message);
     }
 
     #[test]

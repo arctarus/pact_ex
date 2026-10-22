@@ -4,7 +4,7 @@ mod args;
 mod error;
 mod handles;
 mod http;
-mod log;
+mod logger;
 mod mock_server;
 mod stack;
 

@@ -25,8 +25,10 @@ defmodule PactEx.Log do
   @doc """
   Sets up the native logger.
 
-  Succeeds only once per OS process. Any later call returns
-  `{:error, :already_initialized}`, whatever its options.
+  Succeeds only once per OS process. After a logger is applied, a call whose
+  sink can be set up returns `{:error, :already_initialized}`, whatever its
+  options. A sink that fails to set up still returns its own error. Invalid
+  options still raise.
 
   ## Options
 
@@ -35,7 +37,8 @@ defmodule PactEx.Log do
     * `:sink` - where to write: `:stdout`, `:stderr` or `{:file, path}`.
       Defaults to `:stdout`. A file sink appends to the file, creates it and
       any missing parent directories, and is opened even when the logger turns
-      out to be initialised already.
+      out to be initialised already. The path must not be blank or start or
+      end with whitespace, because the native library would trim it.
 
   Returns:
 
@@ -44,12 +47,13 @@ defmodule PactEx.Log do
       OS process.
     * `{:error, %PactEx.Error{}}` - the sink could not be set up. Code `-6`
       means the log file could not be opened. Code `-100` means the path
-      contains a NUL byte. The logger is not applied, so you can call `init/1`
-      again with a different sink.
+      contains a NUL byte. No logger is applied by the failed call, so you can
+      call `init/1` again with a different sink, as long as no logger was
+      applied earlier.
 
   Raises `ArgumentError` for an unknown option, an unknown level, or a sink
-  that is not `:stdout`, `:stderr` or `{:file, path}` with a non-empty UTF-8
-  path.
+  that is not `:stdout`, `:stderr` or `{:file, path}` with a UTF-8 path that is
+  not blank and has no leading or trailing whitespace.
   """
   @spec init(keyword()) :: :ok | {:error, :already_initialized} | {:error, Error.t()}
   def init(opts \\ []) do
@@ -74,15 +78,21 @@ defmodule PactEx.Log do
   defp encode_sink!(:stdout), do: "stdout"
   defp encode_sink!(:stderr), do: "stderr"
 
-  defp encode_sink!({:file, path} = sink) when is_binary(path) and path != "" do
-    if String.valid?(path), do: "file " <> path, else: bad_sink!(sink)
+  defp encode_sink!({:file, path} = sink) when is_binary(path) do
+    # The native library trims the sink specifier, so it would silently open a
+    # different path, or reject a blank one with a misleading "unknown sink".
+    if String.valid?(path) and String.trim(path) == path and path != "" do
+      "file " <> path
+    else
+      bad_sink!(sink)
+    end
   end
 
   defp encode_sink!(other), do: bad_sink!(other)
 
   defp bad_sink!(other) do
     raise ArgumentError,
-          "option :sink must be :stdout, :stderr or {:file, path} with a non-empty " <>
-            "UTF-8 path, got: #{inspect(other)}"
+          "option :sink must be :stdout, :stderr or {:file, path} with a UTF-8 path " <>
+            "that is not blank and has no leading or trailing whitespace, got: #{inspect(other)}"
   end
 end
