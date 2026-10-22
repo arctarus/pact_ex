@@ -45,10 +45,10 @@
 **Interfaces:**
 - Produces: `PactEx.Native.version() :: String.t()` (the `pact_ffi` version).
 
-- [ ] **Step 1: Initialise repo and Mix project**
+- [ ] **Step 1: Create the Mix project inside the existing git repo**
 
-Run from `/home/arctarus/Code/elixir/pact-elixir`: `git init && echo y | mix new . --app pact_ex --module PactEx`
-Expected: `mix.exs` and `lib/pact_ex.ex` created, and the `docs/` folder untouched.
+The repo already exists on `main` with `docs/`. Run from `/home/arctarus/Code/elixir/pact-elixir`: `echo y | mix new . --app pact_ex --module PactEx`
+Expected: `mix.exs` and `lib/pact_ex.ex` created, and `docs/` untouched.
 
 - [ ] **Step 2: Configure `mix.exs`**
 
