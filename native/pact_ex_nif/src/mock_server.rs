@@ -75,12 +75,15 @@ fn create_mock_server(
     }))
 }
 
-#[rustler::nif]
+// DirtyIo: pact_ffi takes the global mock server manager mutex here, and holds
+// it across file I/O (`write_pact_file`) and server shutdown (`cleanup`).
+#[rustler::nif(schedule = "DirtyIo")]
 fn mock_server_matched(port: i64) -> NifResult<bool> {
     Ok(pactffi_mock_server_matched(port_arg(port)?.into()))
 }
 
-#[rustler::nif]
+// DirtyIo for the same reason as `mock_server_matched`.
+#[rustler::nif(schedule = "DirtyIo")]
 fn mock_server_mismatches(port: i64) -> NifResult<Option<String>> {
     let ptr: *mut c_char = pactffi_mock_server_mismatches(port_arg(port)?.into());
     if ptr.is_null() {
@@ -88,6 +91,9 @@ fn mock_server_mismatches(port: i64) -> NifResult<Option<String>> {
     }
     // SAFETY: a non-null result is a NUL-terminated string owned by the mock
     // server manager until `pactffi_cleanup_mock_server`. Copy it, don't free it.
+    // Known window: the manager mutex is released when the FFI call returns, so a
+    // concurrent cleanup of the same port could free the string before we copy
+    // it. Callers must not clean up a port while reading its mismatches.
     let json = unsafe { CStr::from_ptr(ptr) }
         .to_string_lossy()
         .into_owned();

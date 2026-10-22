@@ -163,8 +163,20 @@ defmodule PactEx.Native.MockServerTest do
       assert_raise ArgumentError, fn -> Native.with_header(i, :request, "x", -1, "y") end
     end
 
-    test "with_binary_body accepts an empty body", %{interaction: i} do
-      assert Native.with_binary_body(i, :response, "application/octet-stream", <<>>) == :ok
+    test "with_binary_body with an empty body serves an empty response" do
+      pact = Native.new_pact("native-consumer", "native-provider")
+      i = Native.new_interaction(pact, "empty binary")
+      :ok = Native.with_request(i, "GET", "/empty")
+      :ok = Native.response_status(i, "200")
+      :ok = Native.with_binary_body(i, :response, "application/octet-stream", <<>>)
+      {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
+
+      resp = Req.get!("http://127.0.0.1:#{port}/empty", decode_body: false, retry: false)
+      assert resp.status == 200
+      assert resp.body == ""
+      assert Req.Response.get_header(resp, "content-type") == ["application/octet-stream"]
+      assert Native.mock_server_matched(port)
+      assert Native.cleanup_mock_server(port)
     end
 
     test "create_mock_server rejects NUL bytes in every string argument", %{pact: pact} do
@@ -200,8 +212,12 @@ defmodule PactEx.Native.MockServerTest do
     end
 
     test "create_mock_server returns -5 for an invalid address", %{pact: pact} do
+      # Not an IP literal, so pact_ffi resolves it with getaddrinfo. A name over
+      # 255 bytes is rejected locally by every resolver, with no network lookup.
+      host = String.duplicate("a", 300)
+
       assert {:error, %{function: "pactffi_create_mock_server_for_transport", code: -5}} =
-               Native.create_mock_server(pact, "not a valid host name", 0, "http", nil)
+               Native.create_mock_server(pact, host, 0, "http", nil)
     end
 
     test "create_mock_server returns -3 when the port is already in use", %{pact: pact} do
@@ -254,15 +270,38 @@ defmodule PactEx.Native.MockServerTest do
     end
 
     @tag :tmp_dir
-    test "write_pact_file merges with an existing file unless overwrite is true", %{tmp_dir: dir} do
+    test "write_pact_file merges when overwrite is false and replaces when true", %{tmp_dir: dir} do
       path = Path.join(dir, "native-consumer-native-provider.json")
 
-      {:ok, port} = Native.create_mock_server(ping_pact(), "127.0.0.1", 0, "http", nil)
-      assert %{status: 200} = Req.get!("http://127.0.0.1:#{port}/ping", retry: false)
-      assert Native.write_pact_file(port, dir, false) == :ok
-      assert Native.write_pact_file(port, dir, true) == :ok
-      assert path |> File.read!() |> JSON.decode!() |> Map.fetch!("interactions") |> length() == 1
-      assert Native.cleanup_mock_server(port)
+      descriptions = fn ->
+        path
+        |> File.read!()
+        |> JSON.decode!()
+        |> Map.fetch!("interactions")
+        |> Enum.map(& &1["description"])
+        |> Enum.sort()
+      end
+
+      write = fn description, overwrite ->
+        pact = Native.new_pact("native-consumer", "native-provider")
+        :ok = Native.with_specification(pact, :v4)
+        i = Native.new_interaction(pact, description)
+        :ok = Native.with_request(i, "GET", "/#{description}")
+        :ok = Native.response_status(i, "200")
+        {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
+        assert %{status: 200} = Req.get!("http://127.0.0.1:#{port}/#{description}", retry: false)
+        assert Native.write_pact_file(port, dir, overwrite) == :ok
+        assert Native.cleanup_mock_server(port)
+      end
+
+      write.("one", false)
+      assert descriptions.() == ["one"]
+
+      write.("two", false)
+      assert descriptions.() == ["one", "two"]
+
+      write.("three", true)
+      assert descriptions.() == ["three"]
     end
 
     test "cleanup_mock_server stops the server and a second cleanup returns false" do
