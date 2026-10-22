@@ -9,7 +9,8 @@ defmodule PactEx.Error do
       function that rejected the input.
     * `:code` - the numeric error code. `-100` means an argument contained a
       NUL byte. `-101` means `PactEx` rejected an interaction before calling
-      the native library.
+      the native library, for example a missing request or an unsupported
+      value type.
     * `:message` - a description of the failure.
   """
 
@@ -29,6 +30,10 @@ defmodule PactEx.Error do
 
   @impl true
   def message(%__MODULE__{function: function, code: code, message: message}) do
-    "#{function} failed with code #{code}: #{message}"
+    if is_binary(message) and String.starts_with?(message, function) do
+      "#{message} (code #{code})"
+    else
+      "#{function} failed with code #{code}: #{message}"
+    end
   end
 end

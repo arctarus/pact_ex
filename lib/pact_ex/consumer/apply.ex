@@ -4,7 +4,9 @@ defmodule PactEx.Consumer.Apply do
   # Turns a `PactEx.HTTP.Interaction` into native calls on a pact handle.
   #
   # Encoding rules:
-  #   * binaries pass through, maps (matchers) are JSON-encoded;
+  #   * binaries pass through, maps (matchers) are JSON-encoded, integers,
+  #     floats and booleans are stringified (query and header values only);
+  #   * query and header names may be binaries or atoms;
   #   * a list value becomes one native call per element, using its index;
   #   * a map or list body is JSON, a valid UTF-8 binary without NUL is text,
   #     any other binary is sent as binary.
@@ -13,6 +15,7 @@ defmodule PactEx.Consumer.Apply do
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
+  @entry_point "PactEx.Consumer.start_mock_server/3"
 
   @doc """
   Checks that `interaction` can be applied, without calling the native library.
@@ -80,28 +83,48 @@ defmodule PactEx.Consumer.Apply do
 
   defp query(handle, query) do
     each_ok(query, fn {name, values} ->
-      indexed(values, "query parameter #{inspect(name)}", fn index, value ->
-        native(Native.with_query_parameter(handle, name, index, value))
-      end)
+      with {:ok, name} <- name(name, "query parameter") do
+        indexed(values, "query parameter #{inspect(name)}", fn index, value ->
+          native(Native.with_query_parameter(handle, name, index, value))
+        end)
+      end
     end)
   end
 
   defp headers(handle, part, headers) do
     each_ok(headers, fn {name, values} ->
-      indexed(values, "#{part} header #{inspect(name)}", fn index, value ->
-        native(Native.with_header(handle, part, name, index, value))
-      end)
+      with {:ok, name} <- name(name, "#{part} header") do
+        indexed(values, "#{part} header #{inspect(name)}", fn index, value ->
+          native(Native.with_header(handle, part, name, index, value))
+        end)
+      end
     end)
+  end
+
+  defp name(name, _label) when is_binary(name), do: {:ok, name}
+
+  defp name(name, _label) when is_atom(name) and name not in [nil, true, false],
+    do: {:ok, Atom.to_string(name)}
+
+  defp name(other, label) do
+    {:error,
+     invalid("unsupported #{label} name: #{inspect(other)}, expected a string or an atom")}
   end
 
   defp indexed(values, label, fun) do
     values
-    |> List.wrap()
+    |> then(&if is_list(&1), do: &1, else: [&1])
     |> Enum.with_index()
     |> each_ok(fn {value, index} ->
-      with {:ok, encoded} <- value(value, label), do: fun.(index, encoded)
+      with {:ok, encoded} <- param_value(value, label), do: fun.(index, encoded)
     end)
   end
+
+  # Query and header values: scalars are stringified.
+  defp param_value(value, _label) when is_number(value) or is_boolean(value),
+    do: {:ok, to_string(value)}
+
+  defp param_value(value, label), do: value(value, label)
 
   defp body(_handle, _part, nil, _content_type, _label), do: :ok
 
@@ -140,10 +163,15 @@ defmodule PactEx.Consumer.Apply do
       {:error, invalid("cannot encode #{label} as JSON: #{Exception.message(error)}")}
   end
 
-  defp native(:ok), do: :ok
-  defp native({:error, error}), do: {:error, Error.from_native(error)}
+  @doc false
+  @spec native(:ok | {:ok, term()} | {:error, map()}) :: :ok | {:ok, term()} | {:error, Error.t()}
+  def native(:ok), do: :ok
+  def native({:ok, _} = ok), do: ok
+  def native({:error, error}), do: {:error, Error.from_native(error)}
 
-  defp each_ok(enumerable, fun) do
+  @doc false
+  @spec each_ok(Enumerable.t(), (term() -> :ok | {:error, term()})) :: :ok | {:error, term()}
+  def each_ok(enumerable, fun) do
     Enum.reduce_while(enumerable, :ok, fn item, :ok ->
       case fun.(item) do
         :ok -> {:cont, :ok}
@@ -153,6 +181,6 @@ defmodule PactEx.Consumer.Apply do
   end
 
   defp invalid(message) do
-    %Error{function: "PactEx.Consumer.Apply.interaction/2", code: @invalid_code, message: message}
+    %Error{function: @entry_point, code: @invalid_code, message: message}
   end
 end

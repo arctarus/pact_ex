@@ -16,6 +16,18 @@ defmodule PactEx.ErrorTest do
       assert message =~ "no such port"
     end
 
+    test "message/1 does not repeat the function name when the native message starts with it" do
+      message =
+        Exception.message(%Error{
+          function: "pactffi_with_request",
+          code: 1,
+          message: "pactffi_with_request failed with code 1"
+        })
+
+      assert message == "pactffi_with_request failed with code 1 (code 1)"
+      assert length(String.split(message, "pactffi_with_request")) == 2
+    end
+
     test "can be raised with a message" do
       assert_raise Error, ~r/boom/, fn ->
         raise Error, function: "f", code: 1, message: "boom"

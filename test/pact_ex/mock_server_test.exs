@@ -20,6 +20,22 @@ defmodule PactEx.MockServerTest do
 
   defp bad(value), do: Function.identity(value)
 
+  describe "build_url/2" do
+    test "joins IPv4 hosts and names without brackets" do
+      assert MockServer.build_url("127.0.0.1", 1234) == "http://127.0.0.1:1234"
+      assert MockServer.build_url("localhost", 80) == "http://localhost:80"
+    end
+
+    test "brackets IPv6 hosts" do
+      assert MockServer.build_url("::1", 1234) == "http://[::1]:1234"
+      assert MockServer.build_url("fe80::1", 8080) == "http://[fe80::1]:8080"
+    end
+
+    test "does not bracket an already bracketed host" do
+      assert MockServer.build_url("[::1]", 1234) == "http://[::1]:1234"
+    end
+  end
+
   test "matched?/1 and mismatches/1 follow the traffic", %{mock: mock} do
     refute MockServer.matched?(mock)
 

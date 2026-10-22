@@ -18,6 +18,19 @@ defmodule PactEx.MockServer do
           pact_ref: reference()
         }
 
+  @doc false
+  @spec build_url(String.t(), non_neg_integer()) :: String.t()
+  def build_url(host, port) do
+    host =
+      if String.contains?(host, ":") and not String.starts_with?(host, "[") do
+        "[" <> host <> "]"
+      else
+        host
+      end
+
+    "http://#{host}:#{port}"
+  end
+
   @doc """
   Returns `true` if every expected request arrived and no unexpected request did.
 

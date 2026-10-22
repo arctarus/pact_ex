@@ -15,6 +15,8 @@ defmodule PactEx.ConsumerTest do
 
   defp read_pact(dir), do: dir |> pact_path() |> File.read!() |> JSON.decode!()
 
+  defp body_of(dir, part), do: hd(read_pact(dir)["interactions"])[part]["body"]
+
   defp simple(description, path) do
     HTTP.interaction(description)
     |> HTTP.with_request(:get, path)
@@ -61,7 +63,7 @@ defmodule PactEx.ConsumerTest do
                end)
     end
 
-    test "raw text body keeps its content type", %{pact: pact} do
+    test "raw text body keeps its content type", %{pact: pact, tmp_dir: dir} do
       i =
         HTTP.interaction("plain")
         |> HTTP.with_request(:get, "/txt")
@@ -73,6 +75,9 @@ defmodule PactEx.ConsumerTest do
                  assert resp.body == "<a>hi</a>"
                  assert Req.Response.get_header(resp, "content-type") |> hd() =~ "application/xml"
                end)
+
+      assert %{"content" => "<a>hi</a>", "contentType" => "application/xml", "encoded" => false} =
+               body_of(dir, "response")
     end
 
     test "multi-valued query params and matcher header values", %{pact: pact} do
@@ -96,9 +101,10 @@ defmodule PactEx.ConsumerTest do
     } do
       i = simple("never", "/never")
 
-      assert {:error, %PactEx.MismatchError{mismatches: [%{"type" => "missing-request"}]}} =
+      assert {:error, %PactEx.MismatchError{mismatches: [%{"type" => "missing-request"}]} = e} =
                Consumer.run(pact, [i], fn _ -> :ok end)
 
+      assert Exception.message(e) =~ "/never"
       refute File.exists?(pact_path(dir))
     end
 
@@ -313,23 +319,75 @@ defmodule PactEx.ConsumerTest do
       assert written["request"]["headers"]["x-req"] == ["one", "two"]
     end
 
+    test "atom query and header names are turned into strings", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("atom names")
+        |> HTTP.with_request(:get, "/atoms", query: %{page: "1"}, headers: %{accept: "json"})
+        |> HTTP.will_respond_with(200, headers: %{etag: "abc"})
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/atoms?page=1", headers: [{"accept", "json"}])
+                 assert Req.Response.get_header(resp, "etag") == ["abc"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["request"]["query"] == %{"page" => ["1"]}
+      assert written["request"]["headers"]["accept"] == ["json"]
+      assert written["response"]["headers"]["etag"] == ["abc"]
+    end
+
+    test "integer, float and boolean query and header values are stringified", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("scalars")
+        |> HTTP.with_request(:get, "/scalars",
+          query: %{"page" => 2, "ratio" => 1.5, "full" => true, "ids" => [1, 2]},
+          headers: %{"x-n" => 5, "x-flag" => false}
+        )
+        |> HTTP.will_respond_with(200, headers: %{"x-count" => 3})
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.get!(m.url <> "/scalars?page=2&ratio=1.5&full=true&ids=1&ids=2",
+                     headers: [{"x-n", "5"}, {"x-flag", "false"}]
+                   )
+
+                 assert Req.Response.get_header(resp, "x-count") == ["3"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      assert %{"page" => ["2"], "ratio" => ["1.5"], "full" => ["true"], "ids" => ["1", "2"]} =
+               written["request"]["query"]
+
+      assert %{"x-n" => ["5"], "x-flag" => ["false"]} = written["request"]["headers"]
+    end
+
     test "matcher values in query and response headers are written as matching rules", %{
       pact: pact,
       tmp_dir: dir
     } do
       i =
         HTTP.interaction("matcher values")
-        |> HTTP.with_request(:get, "/m", query: %{"id" => regex("12", "^\\d+$")})
+        |> HTTP.with_request(:get, "/m",
+          query: %{"id" => regex("12", "^\\d+$")},
+          headers: %{"x-req" => regex("r-1", "^r-\\d+$")}
+        )
         |> HTTP.will_respond_with(200, headers: %{"x-trace" => like("abc")})
 
       assert :ok =
                Consumer.run(pact, [i], fn m ->
-                 resp = Req.get!(m.url <> "/m?id=777")
+                 resp = Req.get!(m.url <> "/m?id=777", headers: [{"x-req", "r-9"}])
                  assert Req.Response.get_header(resp, "x-trace") == ["abc"]
                end)
 
       [written] = read_pact(dir)["interactions"]
       assert get_in(written, ["request", "matchingRules", "query", "id"])
+      assert get_in(written, ["request", "matchingRules", "header", "x-req"])
       assert get_in(written, ["response", "matchingRules", "header", "x-trace"])
     end
 
@@ -410,7 +468,7 @@ defmodule PactEx.ConsumerTest do
                end)
     end
 
-    test "a raw text request body is matched byte for byte", %{pact: pact} do
+    test "a raw text request body is matched byte for byte", %{pact: pact, tmp_dir: dir} do
       xml = "<user><name>Ann</name></user>"
 
       i =
@@ -425,6 +483,9 @@ defmodule PactEx.ConsumerTest do
                    headers: [{"content-type", "application/xml"}]
                  )
                end)
+
+      assert %{"content" => ^xml, "contentType" => "application/xml", "encoded" => false} =
+               body_of(dir, "request")
     end
 
     test "a non-UTF-8 binary body goes through unchanged, in both directions", %{
@@ -452,11 +513,18 @@ defmodule PactEx.ConsumerTest do
                end)
 
       [written] = read_pact(dir)["interactions"]
-      assert written["response"]["body"]["contentType"] == "image/png"
-      assert written["request"]["body"]["contentType"] == "application/octet-stream"
+
+      assert %{"content" => "CcgA", "contentType" => "image/png", "encoded" => "base64"} =
+               written["response"]["body"]
+
+      assert %{
+               "content" => "AP8BgA==",
+               "contentType" => "application/octet-stream",
+               "encoded" => "base64"
+             } = written["request"]["body"]
     end
 
-    test "a UTF-8 body containing a NUL byte is sent as binary", %{pact: pact} do
+    test "a UTF-8 body containing a NUL byte is sent as binary", %{pact: pact, tmp_dir: dir} do
       body = "a\0b"
 
       i =
@@ -472,6 +540,12 @@ defmodule PactEx.ConsumerTest do
                  assert Req.Response.get_header(resp, "content-type") |> hd() =~
                           "application/octet-stream"
                end)
+
+      assert %{
+               "content" => "YQBi",
+               "contentType" => "application/octet-stream",
+               "encoded" => "base64"
+             } = body_of(dir, "response")
     end
 
     test "an each_like body is matched against a longer array", %{pact: pact, tmp_dir: dir} do
@@ -517,15 +591,61 @@ defmodule PactEx.ConsumerTest do
 
     test "unsupported value types are rejected with a PactEx.Error", %{pact: pact} do
       cases = [
-        {"query", &HTTP.with_request(&1, :get, "/x", query: %{"page" => 1})},
-        {"header", &HTTP.with_request(&1, :get, "/x", headers: %{"x" => :atom})},
-        {"body", &HTTP.with_request(&1, :get, "/x", body: 42)}
+        {"query", &HTTP.with_request(&1, :get, "/x", query: %{"page" => {:tuple}})},
+        {"header", &HTTP.with_request(&1, :get, "/x", headers: %{"x" => self()})},
+        {"body", &HTTP.with_request(&1, :get, "/x", body: 42)},
+        {"response header",
+         &(&1
+           |> HTTP.with_request(:get, "/x")
+           |> HTTP.will_respond_with(200, headers: %{"y" => {:tuple}}))}
       ]
 
       for {label, build} <- cases do
         i = build.(HTTP.interaction(label))
-        assert {:error, %PactEx.Error{message: message}} = Consumer.start_mock_server(pact, [i])
+
+        assert {:error, %PactEx.Error{code: -101, function: function, message: message}} =
+                 Consumer.start_mock_server(pact, [i])
+
+        assert function == "PactEx.Consumer.start_mock_server/3"
         assert message =~ label
+      end
+    end
+
+    test "nil query and header values are rejected, naming the key", %{pact: pact} do
+      cases = [
+        {~s("page"), &HTTP.with_request(&1, :get, "/x", query: %{"page" => nil})},
+        {~s("x-n"), &HTTP.with_request(&1, :get, "/x", headers: %{"x-n" => nil})},
+        {~s("tag"), &HTTP.with_request(&1, :get, "/x", query: %{"tag" => ["a", nil]})}
+      ]
+
+      for {key, build} <- cases do
+        i = build.(HTTP.interaction("nil value"))
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i])
+
+        assert message =~ key
+        assert message =~ "nil"
+      end
+    end
+
+    test "non-string, non-atom query and header names are rejected, naming the key", %{pact: pact} do
+      cases = [
+        &HTTP.with_request(&1, :get, "/x", query: %{1 => "a"}),
+        &HTTP.with_request(&1, :get, "/x", headers: %{{:a} => "a"}),
+        &HTTP.with_request(&1, :get, "/x", query: %{nil => "a"}),
+        &(&1
+          |> HTTP.with_request(:get, "/x")
+          |> HTTP.will_respond_with(200, headers: %{2 => "a"}))
+      ]
+
+      for build <- cases do
+        i = build.(HTTP.interaction("bad name"))
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i])
+
+        assert message =~ "name"
       end
     end
 
@@ -594,6 +714,21 @@ defmodule PactEx.ConsumerTest do
     end
   end
 
+  test "the re-raised exception keeps its original stacktrace", %{pact: pact} do
+    i = simple("trace", "/trace")
+
+    {error, stacktrace} =
+      try do
+        Consumer.run(pact, [i], fn _ -> raise "from the test function" end)
+      rescue
+        e -> {e, __STACKTRACE__}
+      end
+
+    assert %RuntimeError{message: "from the test function"} = error
+    {_module, _function, _arity, location} = hd(stacktrace)
+    assert Path.basename(to_string(location[:file])) == "consumer_test.exs"
+  end
+
   describe "start_mock_server/3" do
     test "low-level API: start, matched?, mismatches, write_pact, stop", %{
       pact: pact,
@@ -644,6 +779,22 @@ defmodule PactEx.ConsumerTest do
       assert mock.port == free_port
       assert mock.url == "http://127.0.0.1:#{free_port}"
       assert %{status: 200} = Req.get!(mock.url <> "/explicit")
+    end
+
+    test "binds an IPv6 loopback host and brackets it in the url", %{pact: pact} do
+      case :gen_tcp.listen(0, [:inet6, ip: {0, 0, 0, 0, 0, 0, 0, 1}]) do
+        {:ok, socket} ->
+          :gen_tcp.close(socket)
+          i = simple("ipv6", "/ipv6")
+          assert {:ok, mock} = Consumer.start_mock_server(pact, [i], host: "::1")
+          on_exit(fn -> PactEx.MockServer.stop(mock) end)
+          assert mock.url == "http://[::1]:#{mock.port}"
+          assert %{status: 200} = Req.get!(mock.url <> "/ipv6", retry: false)
+
+        {:error, _reason} ->
+          # No IPv6 loopback on this machine.
+          :ok
+      end
     end
 
     test "fails with a PactEx.Error when the port is already in use", %{pact: pact} do

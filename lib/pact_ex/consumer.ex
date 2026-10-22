@@ -17,6 +17,18 @@ defmodule PactEx.Consumer do
   expected request arrived and that no other did, then writes the pact file.
   Nothing is written when something did not match.
 
+  ## How interactions are encoded
+
+    * Paths, query values and header values are strings or matcher maps
+      (see `PactEx.Matchers`). Query and header values may also be integers,
+      floats or booleans, which become strings. A list gives a multi-valued
+      parameter. `nil` and other types are rejected.
+    * Query and header names are strings or atoms.
+    * A map or list body is sent as JSON (`application/json` by default). A
+      string body is sent as text (`text/plain` by default) when it is valid
+      UTF-8 without NUL bytes, and as binary (`application/octet-stream` by
+      default) otherwise. Set `:content_type` to override.
+
   The pact file is `<pact_dir>/<consumer>-<provider>.json`. It is merged with
   an existing file, so several runs can add interactions to the same pact.
   """
@@ -89,7 +101,7 @@ defmodule PactEx.Consumer do
       OS pick a free port.
 
   Returns `{:error, %PactEx.Error{}}` if an interaction is invalid (for
-  example, it has no request), if an argument contains a NUL byte, or if the
+  example, it has no request or a value of an unsupported type), if an argument contains a NUL byte, or if the
   server cannot bind. A missing response defaults to status 200.
 
   Raises `ArgumentError` on unknown options, a port out of range, or a NUL
@@ -105,14 +117,14 @@ defmodule PactEx.Consumer do
     with :ok <- validate_all(interactions) do
       pact_ref = Native.new_pact(pact.consumer, pact.provider)
 
-      with :ok <- native(Native.with_specification(pact_ref, pact.spec)),
+      with :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
            :ok <- apply_all(pact_ref, interactions),
            {:ok, bound_port} <-
-             native(Native.create_mock_server(pact_ref, host, port, "http", nil)) do
+             Apply.native(Native.create_mock_server(pact_ref, host, port, "http", nil)) do
         {:ok,
          %MockServer{
            port: bound_port,
-           url: "http://#{host}:#{bound_port}",
+           url: MockServer.build_url(host, bound_port),
            pact_dir: pact.pact_dir,
            pact_ref: pact_ref
          }}
@@ -128,22 +140,9 @@ defmodule PactEx.Consumer do
     end
   end
 
-  defp validate_all(interactions), do: each_ok(interactions, &Apply.validate/1)
+  defp validate_all(interactions), do: Apply.each_ok(interactions, &Apply.validate/1)
 
   defp apply_all(pact_ref, interactions) do
-    each_ok(interactions, &Apply.interaction(pact_ref, &1))
+    Apply.each_ok(interactions, &Apply.interaction(pact_ref, &1))
   end
-
-  defp each_ok(items, fun) do
-    Enum.reduce_while(items, :ok, fn item, :ok ->
-      case fun.(item) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-  end
-
-  defp native(:ok), do: :ok
-  defp native({:ok, _} = ok), do: ok
-  defp native({:error, error}), do: {:error, Error.from_native(error)}
 end
