@@ -1,5 +1,9 @@
 use std::ffi::CStr;
 
+mod error;
+mod handles;
+mod stack;
+
 #[rustler::nif]
 fn version() -> String {
     // SAFETY: `pactffi_version` returns a pointer to a static NUL-terminated string.
