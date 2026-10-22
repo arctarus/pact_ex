@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- Every plan 1 Global Constraint applies.
+- Every plan 1 Global Constraint applies, including the test-coverage rule: unit tests for every new function or NIF and its error paths, plus end-to-end tests. Here end-to-end means a real `Message.run` or `SyncMessage.run`, a real gRPC client against the plugin mock server, and assertions on the written pact.
 - Protobuf plugin version `0.8.1`. Install it under `${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-0.8.1` with `scripts/install-protobuf-plugin.sh`.
 - Tests that need a plugin are tagged `:plugin`, live in `async: false` modules, and are excluded unless `<plugin dir>/protobuf-0.8.1/pact-plugin.json` exists.
 - Every code path that calls `using_plugin` must call `cleanup_plugins` on the same pact handle, including when the test function raises. Plugins are OS processes and survive otherwise.
