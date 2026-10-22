@@ -53,6 +53,8 @@ defmodule PactEx.Native do
   def mock_server_matched(_port), do: :erlang.nif_error(:nif_not_loaded)
   def mock_server_mismatches(_port), do: :erlang.nif_error(:nif_not_loaded)
 
+  def init_logger(_sink, _level), do: :erlang.nif_error(:nif_not_loaded)
+
   def write_pact_file(_port, _dir, _overwrite), do: :erlang.nif_error(:nif_not_loaded)
   def cleanup_mock_server(_port), do: :erlang.nif_error(:nif_not_loaded)
 end

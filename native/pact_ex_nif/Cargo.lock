@@ -2329,6 +2329,7 @@ dependencies = [
 name = "pact_ex_nif"
 version = "0.1.0"
 dependencies = [
+ "log",
  "pact_ffi",
  "pact_models",
  "rustler",
