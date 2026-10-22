@@ -1,7 +1,10 @@
 use std::ffi::CStr;
 
+mod args;
 mod error;
 mod handles;
+mod http;
+mod mock_server;
 mod stack;
 
 #[rustler::nif]

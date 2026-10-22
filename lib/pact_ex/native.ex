@@ -30,4 +30,29 @@ defmodule PactEx.Native do
 
   def given_with_params(_interaction, _state, _params_json),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  def with_request(_interaction, _method, _path), do: :erlang.nif_error(:nif_not_loaded)
+
+  def with_query_parameter(_interaction, _name, _index, _value),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def with_header(_interaction, _part, _name, _index, _value),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def with_body(_interaction, _part, _content_type, _body),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def with_binary_body(_interaction, _part, _content_type, _body),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def response_status(_interaction, _status), do: :erlang.nif_error(:nif_not_loaded)
+
+  def create_mock_server(_pact, _host, _port, _transport, _config_json),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def mock_server_matched(_port), do: :erlang.nif_error(:nif_not_loaded)
+  def mock_server_mismatches(_port), do: :erlang.nif_error(:nif_not_loaded)
+
+  def write_pact_file(_port, _dir, _overwrite), do: :erlang.nif_error(:nif_not_loaded)
+  def cleanup_mock_server(_port), do: :erlang.nif_error(:nif_not_loaded)
 end

@@ -6,6 +6,7 @@ use pact_ffi::mock_server::handles::{
 };
 use rustler::{NifResult, NifUnitEnum, Resource, ResourceArc, Term};
 
+use crate::args::decode_arg;
 use crate::error::{clear_error, last_error, to_cstring, Outcome};
 
 pub struct PactResource {
@@ -63,9 +64,7 @@ fn new_pact(consumer: String, provider: String) -> NifResult<ResourceArc<PactRes
 
 #[rustler::nif]
 fn with_specification(pact: ResourceArc<PactResource>, spec: Term) -> NifResult<Outcome> {
-    // Decoding `Spec` directly would raise `ErlangError :invalid_variant`; an
-    // unknown atom is a caller bug and must surface as `ArgumentError`.
-    let spec: Spec = spec.decode().map_err(|_| rustler::Error::BadArg)?;
+    let spec: Spec = decode_arg(spec)?;
     clear_error();
     if pactffi_with_specification(pact.handle, spec.into()) {
         Ok(Outcome::Ok)
