@@ -13,8 +13,10 @@ old versions still download from the old URL.
 2. Push the commit to `main` and wait for CI to pass. Do not tag a commit that
    has not passed CI.
 3. Tag the commit `vX.Y.Z` and push the tag. `release.yml` fails if the tag does
-   not match `@version`. Wait for all 12 jobs (6 targets, NIF 2.16 and 2.17) to
-   finish. Each job uploads one `.tar.gz` to the GitHub release.
+   not match `@version`. Wait for the 12 build jobs (6 targets, NIF 2.16 and
+   2.17) and the `publish` job to finish. `publish` runs only when every build
+   job passed, and uploads the 12 `.tar.gz` files to the GitHub release in one
+   step.
 4. Generate the checksum file:
 
    ```sh
@@ -36,6 +38,31 @@ old versions still download from the old URL.
    It must contain `lib/`, `native/pact_ex_nif/src`, `Cargo.toml`, `Cargo.lock`,
    `.cargo/config.toml` and the checksum file, and must not contain `target/` or
    `priv/`.
+
+## Dry run
+
+`release.yml` also runs without a tag, and then it publishes nothing. It builds
+the same 12 files, runs the same checks and keeps the tarballs as workflow
+artifacts for 7 days. The version in their names is `@version` from `mix.exs`.
+A dry run starts:
+
+- on a pull request that touches `native/**`, `mix.exs` or
+  `.github/workflows/release.yml`;
+- by hand: Actions, "Release precompiled NIFs", "Run workflow", on any branch
+  (the workflow file must exist on the default branch for the button to show).
+
+Run one before the first release, and after any change to the pipeline. The
+`publish` job is skipped. To test the release itself, tag a throwaway version
+on a fork.
+
+## Check the glibc floor
+
+The two `*-unknown-linux-gnu` jobs print the highest `GLIBC_x.y` symbol version
+that the NIF needs (`readelf -W --dyn-syms`), and add it to the run summary.
+The x86_64 job fails when it is above `GLIBC_2.35`, the glibc of the
+`ubuntu-22.04` runner. The aarch64 job is built in a cross image, so it only
+reports. If the measured value differs from the "glibc 2.34" in the README,
+change the README and the last note below.
 
 ## Check the artifact contents
 

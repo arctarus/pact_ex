@@ -4,7 +4,7 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Important
 
-- [ ] **Validate the first tag release on GitHub.** None of the 12 release jobs has run, and the aarch64-gnu and musl cross builds are untested. Run `objdump -T` on the x86_64-gnu artifact to confirm the glibc 2.34 floor.
+- [ ] **Check the release dry run.** Push the branch and open the PR, or start `release.yml` by hand. Check that all 12 build jobs pass (the aarch64-gnu and musl cross builds are untested) and that `publish` is skipped. Read the "Check the glibc floor" output of the two gnu targets. Then update the glibc 2.34 floor in README and RELEASING to the measured x86_64 value, and note the aarch64 value. Then close this item and the "Dry-run `release.yml`" item below.
 
 ## Minor: code
 
