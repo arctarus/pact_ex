@@ -345,8 +345,10 @@ defmodule PactEx.ConsumerTest do
       assert written["request"]["body"]["content"] == %{"n" => 42, "ok" => true}
       assert written["request"]["matchingRules"]["body"]["$.n"]["combine"] == "AND"
 
-      assert [%{"match" => "regex", "regex" => "^\\d+$"}] =
-               written["request"]["matchingRules"]["body"]["$.n"]["matchers"]
+      rules = written["request"]["matchingRules"]["body"]
+
+      assert [%{"match" => "regex", "regex" => "^\\d+$"}] = rules["$.n"]["matchers"]
+      assert [%{"match" => "regex", "regex" => "^(true|false)$"}] = rules["$.ok"]["matchers"]
 
       # A value whose string form does not match the pattern is a mismatch.
       File.rm!(pact_path(dir))
@@ -2201,7 +2203,7 @@ defmodule PactEx.ConsumerTest do
       end
     end
 
-    test "a string body nested deeper than serde_json's limit names the limit", %{pact: pact} do
+    test "a string body nested 128 levels or more names serde_json's limit", %{pact: pact} do
       deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
 
       i =
@@ -2215,8 +2217,25 @@ defmodule PactEx.ConsumerTest do
       assert {:error, %PactEx.Error{code: -101, message: message}} =
                Consumer.start_mock_server(pact, [i])
 
-      assert message =~ "nested deeper than serde_json's limit of 128 levels"
+      assert message =~ "nested 128 levels or more (serde_json's limit)"
       refute message =~ "not valid JSON"
+    end
+
+    test "a map body nested 128 levels deep names serde_json's limit", %{pact: pact} do
+      body = Enum.reduce(1..128, "x", fn _, acc -> %{"k" => acc} end)
+
+      i =
+        HTTP.interaction("too deep map")
+        |> HTTP.with_request(:get, "/f")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => "application/x-www-form-urlencoded"},
+          body: body
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "nested 128 levels or more (serde_json's limit)"
     end
 
     test "a string body under a form type that is not sniffed as JSON stays byte for byte", %{

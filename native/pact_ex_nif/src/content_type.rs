@@ -69,8 +69,9 @@ fn detects_json(text: &str) -> bool {
 /// uppercases a copy of it and runs four regular expressions over it, which
 /// takes tens of milliseconds for a few MB. It also logs the whole text with
 /// `debug!`, which formats and writes the body once more. That cost applies
-/// only when a debug-level tracing subscriber is installed
-/// (`PactEx.Log.init(level: :debug)`); without one, `debug!` formats nothing.
+/// only when a tracing subscriber that accepts debug-level events (`:debug` or
+/// `:trace`) is installed, as `PactEx.Log.init(level: :debug)` does; without
+/// one, `debug!` formats nothing.
 /// There is no deep recursion to guard against: the `regex` crate matches in
 /// linear time without recursion, and nothing here walks a nested structure,
 /// so the scheduler thread's own stack is enough (no `on_large_stack`). It
@@ -87,7 +88,7 @@ enum Shape {
     Object(String),
     Other,
     Invalid,
-    /// Valid so far, but nested deeper than serde_json's limit of 128.
+    /// Valid so far, but nested 128 levels or more (serde_json's limit).
     TooDeep,
 }
 

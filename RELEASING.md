@@ -115,9 +115,11 @@ fails if it holds anything else. `priv/` is git-ignored and not in the package.
 - The workflows pin third-party actions by commit SHA, with the tag in a
   trailing comment. To update one, resolve the new tag to its commit (for an
   annotated tag, the commit it points to) and change both. The exception is
-  `dtolnay/rust-toolchain`. It has no release tags, so it is pinned to the head
-  of its `stable` branch at the time, and the comment says `stable`. To update
-  it, resolve `stable` to its current commit.
+  `dtolnay/rust-toolchain`. The ref you pin selects the toolchain, so its
+  `stable` branch is pinned by the commit at its head, and the comment says
+  `stable`. Its `v1` tag and `master` branch need a `toolchain:` input, which
+  `ci.yml` and `release.yml` do not pass. To update it, resolve `stable` to its
+  current commit.
 - The `x86_64-unknown-linux-gnu` NIF is built natively on `ubuntu-22.04` and
   needs glibc 2.34 or later; the `aarch64-unknown-linux-gnu` NIF needs 2.18
   (`readelf -W --dyn-syms libpact_ex_nif.so | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1`).

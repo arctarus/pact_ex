@@ -128,21 +128,21 @@ the text must start with one of these:
 
 - `true`, `false` or `null`, or one or more ASCII digits (`-1` does not
   count);
-- a `"` followed by any number of word characters (so a lone `"` counts);
+- a `"` (anything may follow);
 - `{` and optional whitespace, then `}` or a `"` and a word character (`{ }`,
   `{"a`). `{"":1}` and `{"-a":1}` are not sniffed, because the first key is
   empty or starts with a non-word character;
 - `[` and optional whitespace. Anything may follow.
 
-Word characters are Unicode letters, digits and `_`. Nothing after that
-prefix is looked at, so `1=a&2=b`, `null_flag=1` and `123 items` are sniffed as
-JSON.
+A word character is a Unicode word character (letters, marks, digits,
+connector punctuation such as `_`). Nothing after that prefix is looked at, so
+`1=a&2=b`, `null_flag=1` and `123 items` are sniffed as JSON.
 
 A string that is not sniffed as JSON (raw XML, `a=1&b=2`) is sent byte for byte.
 A string that is sniffed as JSON must be a JSON object that is a valid
 description. For XML, a description is turned into XML. A raw form string that
-is sniffed as JSON, such as `1=a&2=b` or `null_flag=1`, returns an error, because
-pact_ffi would panic on it.
+is sniffed as JSON, such as `1=a&2=b` or `null_flag=1`, returns an error,
+because pact_ffi would panic on it.
 
 An XML description is a map with a `"root"` element. An element is
 `%{"name" => ..., "attributes" => %{...}, "children" => [...]}`. A child is an

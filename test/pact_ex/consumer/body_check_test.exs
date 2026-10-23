@@ -447,12 +447,12 @@ defmodule PactEx.Consumer.BodyCheckTest do
 
       assert_invalid(
         BodyCheck.check(:form, ~s({"a":#{deep}}), :text),
-        "serde_json's limit of 128"
+        "128 levels or more"
       )
 
       assert_invalid(
         BodyCheck.check(:xml, ~s({"root":{"name":"r"},"x":#{deep}}), :text),
-        "serde_json's limit of 128"
+        "128 levels or more"
       )
     end
 
@@ -461,14 +461,28 @@ defmodule PactEx.Consumer.BodyCheckTest do
       text = ~s({"a":) <> String.duplicate("[", 127) <> String.duplicate("]", 127) <> "}"
 
       assert {:error, message} = BodyCheck.check(:form, text, :text)
-      assert message =~ "nested deeper than serde_json's limit of 128 levels"
+      assert message =~ "nested 128 levels or more (serde_json's limit)"
+      refute message =~ "not valid JSON"
+    end
+
+    test "127 levels do not get the nesting message" do
+      text = ~s({"a":) <> String.duplicate("[", 126) <> String.duplicate("]", 126) <> "}"
+
+      refute match?({:error, "the JSON is nested" <> _}, BodyCheck.check(:form, text, :text))
+    end
+
+    test "a map nested 128 levels deep, encoded by PactEx, gets the nesting message" do
+      text = JSON.encode!(Enum.reduce(1..128, "x", fn _, acc -> %{"k" => acc} end))
+
+      assert {:error, message} = BodyCheck.check(:form, text, :encoded)
+      assert message =~ "nested 128 levels or more (serde_json's limit)"
       refute message =~ "not valid JSON"
     end
 
     test "invalid JSON keeps the syntax message" do
       assert {:error, message} = BodyCheck.check(:form, ~s({"a":[1,]}), :text)
       assert message =~ "is not valid JSON"
-      refute message =~ "nested deeper"
+      refute message =~ "128 levels"
     end
 
     test "a number that serde_json cannot read as an unsigned integer is rejected in examples" do
