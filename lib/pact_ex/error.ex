@@ -29,11 +29,16 @@ defmodule PactEx.Error do
   end
 
   @impl true
-  def message(%__MODULE__{function: function, code: code, message: message}) do
+  def message(%__MODULE__{function: function, code: code, message: message})
+      when is_binary(function) do
     if is_binary(message) and String.starts_with?(message, function) do
       "#{message} (code #{code})"
     else
       "#{function} failed with code #{code}: #{message}"
     end
   end
+
+  # Raised with a bare message, as in `raise PactEx.Error, "boom"`.
+  def message(%__MODULE__{message: message}) when is_binary(message), do: message
+  def message(%__MODULE__{}), do: "PactEx error"
 end

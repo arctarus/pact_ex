@@ -29,6 +29,12 @@ defmodule PactEx.HTTPTest do
       assert_raise ArgumentError, fn -> PactEx.new("c", "p", pactdir: "x") end
     end
 
+    test "rejects a :pact_dir that is not a non-empty string" do
+      for dir <- ["", nil, :pacts, 1, ["pacts"]] do
+        assert_raise ArgumentError, ~r/pact_dir/, fn -> PactEx.new("c", "p", pact_dir: dir) end
+      end
+    end
+
     test "delegates to PactEx.Pact.new/3" do
       assert PactEx.new("c", "p", spec: :v2) == PactEx.Pact.new("c", "p", spec: :v2)
     end

@@ -27,7 +27,8 @@ defmodule PactEx.Pact do
     * `:spec` - Pact specification, one of `:v2`, `:v3` or `:v4`. Defaults to `:v4`.
     * `:pact_dir` - Directory where the pact file is written. Defaults to `"pacts"`.
 
-  Raises `ArgumentError` on unknown options or an invalid `:spec`. Raises
+  Raises `ArgumentError` on unknown options, an invalid `:spec` or a `:pact_dir`
+  that is not a non-empty string. Raises
   `FunctionClauseError` if `consumer` or `provider` is not a string.
   """
   @spec new(String.t(), String.t(), keyword()) :: t()
@@ -41,11 +42,13 @@ defmodule PactEx.Pact do
             "invalid :spec #{inspect(spec)}, expected one of #{inspect(@specs)}"
     end
 
-    %__MODULE__{
-      consumer: consumer,
-      provider: provider,
-      spec: spec,
-      pact_dir: Keyword.fetch!(opts, :pact_dir)
-    }
+    pact_dir = Keyword.fetch!(opts, :pact_dir)
+
+    unless is_binary(pact_dir) and pact_dir != "" do
+      raise ArgumentError,
+            "invalid :pact_dir #{inspect(pact_dir)}, expected a non-empty string"
+    end
+
+    %__MODULE__{consumer: consumer, provider: provider, spec: spec, pact_dir: pact_dir}
   end
 end

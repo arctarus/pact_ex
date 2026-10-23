@@ -34,6 +34,16 @@ defmodule PactEx.ErrorTest do
       end
     end
 
+    test "raising with a bare message does not need a function or code" do
+      assert_raise Error, "msg", fn -> raise Error, "msg" end
+      assert_raise Error, "msg", fn -> raise Error, message: "msg" end
+    end
+
+    test "message/1 tolerates a missing function and message" do
+      assert Exception.message(%Error{code: 3, message: "no function"}) == "no function"
+      assert is_binary(Exception.message(%Error{}))
+    end
+
     test "from_native/1 requires function, code and message" do
       assert_raise FunctionClauseError, fn -> Error.from_native(Function.identity(%{})) end
     end
