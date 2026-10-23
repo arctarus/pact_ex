@@ -69,6 +69,23 @@ fn last_error_with_capacity(function: &str, code: i64, capacity: usize) -> FfiEr
     }
 }
 
+/// Builds the error for a failed call. A message stored by `pact_ffi` wins;
+/// `describe` supplies one for a known code only when `pact_ffi` stored none,
+/// that is, when the message is still [`fallback_message`].
+pub fn failure_with(
+    function: &str,
+    code: i64,
+    describe: impl FnOnce(i64) -> Option<String>,
+) -> FfiError {
+    let mut error = last_error(function, code);
+    if error.message == fallback_message(function, code) {
+        if let Some(message) = describe(code) {
+            error.message = message;
+        }
+    }
+    error
+}
+
 /// Converts `s` to a C string, rejecting interior NUL bytes without touching the FFI.
 pub fn to_cstring(function: &str, s: &str) -> Result<CString, FfiError> {
     CString::new(s).map_err(|_| FfiError {
@@ -134,6 +151,30 @@ mod tests {
         let error = last_error("pactffi_given_with_params", code);
         assert_eq!(error.function, "pactffi_given_with_params");
         assert_eq!(error.code, 2);
+        assert!(error.message.contains("expected"), "{}", error.message);
+    }
+
+    #[test]
+    fn failure_with_describes_a_code_when_pact_ffi_stored_nothing() {
+        clear_error();
+        let error = failure_with("f", 7, |code| Some(format!("described {code}")));
+        assert_eq!(error.code, 7);
+        assert_eq!(error.message, "described 7");
+    }
+
+    #[test]
+    fn failure_with_keeps_the_generic_message_when_describe_has_nothing() {
+        clear_error();
+        let error = failure_with("f", 7, |_| None);
+        assert_eq!(error.message, fallback_message("f", 7));
+    }
+
+    #[test]
+    fn failure_with_keeps_a_message_stored_by_pact_ffi() {
+        let code = fail_given_with_params();
+        let error = failure_with("pactffi_given_with_params", code, |_| {
+            Some("described".to_owned())
+        });
         assert!(error.message.contains("expected"), "{}", error.message);
     }
 

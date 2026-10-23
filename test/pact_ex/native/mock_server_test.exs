@@ -31,8 +31,11 @@ defmodule PactEx.Native.MockServerTest do
   end
 
   test "invalid transport config JSON returns code -2" do
-    assert {:error, %{function: "pactffi_create_mock_server_for_transport", code: -2}} =
+    assert {:error,
+            %{function: "pactffi_create_mock_server_for_transport", code: -2, message: message}} =
              Native.create_mock_server(ping_pact(), "127.0.0.1", 0, "http", "not json")
+
+    assert message =~ "transport config is not valid JSON"
   end
 
   test "binary body round-trips byte for byte" do
@@ -110,8 +113,10 @@ defmodule PactEx.Native.MockServerTest do
     refute Native.mock_server_matched(1)
     assert Native.mock_server_mismatches(1) == nil
 
-    assert {:error, %{function: "pactffi_write_pact_file", code: 3}} =
+    assert {:error, %{function: "pactffi_write_pact_file", code: 3, message: message}} =
              Native.write_pact_file(1, dir, false)
+
+    assert message =~ "no mock server on port 1"
 
     refute Native.cleanup_mock_server(1)
   end
@@ -216,8 +221,11 @@ defmodule PactEx.Native.MockServerTest do
       # 255 bytes is rejected locally by every resolver, with no network lookup.
       host = String.duplicate("a", 300)
 
-      assert {:error, %{function: "pactffi_create_mock_server_for_transport", code: -5}} =
+      assert {:error,
+              %{function: "pactffi_create_mock_server_for_transport", code: -5, message: message}} =
                Native.create_mock_server(pact, host, 0, "http", nil)
+
+      assert message =~ "is not valid"
     end
 
     test "create_mock_server returns -3 when the port is already in use", %{pact: pact} do
@@ -225,8 +233,11 @@ defmodule PactEx.Native.MockServerTest do
 
       other = Native.new_pact("native-consumer", "native-provider")
 
-      assert {:error, %{function: "pactffi_create_mock_server_for_transport", code: -3}} =
+      assert {:error,
+              %{function: "pactffi_create_mock_server_for_transport", code: -3, message: message}} =
                Native.create_mock_server(other, "127.0.0.1", port, "http", nil)
+
+      assert message =~ "could not be started"
 
       assert Native.cleanup_mock_server(port)
     end

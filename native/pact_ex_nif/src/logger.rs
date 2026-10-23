@@ -12,7 +12,7 @@ use pact_ffi::log::{pactffi_logger_apply, pactffi_logger_attach_sink, pactffi_lo
 use rustler::{NifResult, NifUnitEnum, Term};
 
 use crate::args::decode_arg;
-use crate::error::{clear_error, fallback_message, last_error, to_cstring, FfiError, Outcome};
+use crate::error::{clear_error, failure_with, to_cstring, Outcome};
 use crate::stack::on_large_stack;
 
 const ATTACH: &str = "pactffi_logger_attach_sink";
@@ -69,18 +69,8 @@ fn apply_message(code: i64) -> Option<String> {
     }
 }
 
-/// Builds the error for a failed call. A message stored by `pact_ffi` wins;
-/// otherwise `describe` supplies one for known codes.
 fn failure(function: &str, code: c_int, describe: impl FnOnce(i64) -> Option<String>) -> Outcome {
-    let code = i64::from(code);
-    let mut error: FfiError = last_error(function, code);
-    // Only replace the generic fallback, never a message `pact_ffi` stored.
-    if error.message == fallback_message(function, code) {
-        if let Some(message) = describe(code) {
-            error.message = message;
-        }
-    }
-    Outcome::Err(error)
+    Outcome::Err(failure_with(function, i64::from(code), describe))
 }
 
 #[rustler::nif(schedule = "DirtyIo")]

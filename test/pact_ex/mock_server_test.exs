@@ -145,8 +145,10 @@ defmodule PactEx.MockServerTest do
     blocker = Path.join(dir, "blocker")
     File.write!(blocker, "x")
 
-    assert {:error, %PactEx.Error{function: "pactffi_write_pact_file"}} =
+    assert {:error, %PactEx.Error{function: "pactffi_write_pact_file", code: 2, message: message}} =
              MockServer.write_pact(%{mock | pact_dir: blocker})
+
+    assert message =~ "could not write the pact file"
   end
 
   test "stop/1 shuts the server down and is idempotent", %{mock: mock} do
