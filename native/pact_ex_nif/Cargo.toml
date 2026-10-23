@@ -13,6 +13,11 @@ rustler = "0.38"
 pact_ffi = "=0.5.12"
 pact_models = "=1.3.17"
 
+# rustler-precompiled-action picks the NIF version through these features.
+[features]
+nif_version_2_16 = ["rustler/nif_version_2_16"]
+nif_version_2_17 = ["rustler/nif_version_2_17"]
+
 [profile.release]
 strip = true
 lto = "thin"

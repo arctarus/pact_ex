@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, OTP ${{ matrix.beam.otp }}, Elixir ${{ matrix.beam.elixir }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        beam:
+          - { otp: "27", elixir: "1.18" }
+          - { otp: "28", elixir: "1.19" }
+    env:
+      PACT_EX_BUILD: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.beam.otp }}
+          elixir-version: ${{ matrix.beam.elixir }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Rustler builds the NIF with cargo's default target directory,
+      # native/pact_ex_nif/target. It is not under _build.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/pact_ex_nif
+
+      - run: mix deps.get
+
+      - run: mix format --check-formatted
+
+      - run: cargo fmt --check
+        working-directory: native/pact_ex_nif
+
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: native/pact_ex_nif
+
+      - run: mix test

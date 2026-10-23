@@ -1,0 +1,82 @@
+name: Release precompiled NIFs
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: NIF ${{ matrix.nif }} - ${{ matrix.job.target }}
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        nif: ["2.16", "2.17"]
+        job:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          # macos-13 is retired. macos-15-intel is its replacement for x86_64.
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read the version from the tag
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mix_version=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)
+          if [ "$version" != "$mix_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match @version $mix_version in mix.exs"
+            exit 1
+          fi
+          echo "PROJECT_VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.job.target }}
+
+      - name: Build the NIF
+        id: build
+        uses: philss/rustler-precompiled-action@v1.1.5
+        with:
+          project-name: pact_ex_nif
+          project-version: ${{ env.PROJECT_VERSION }}
+          target: ${{ matrix.job.target }}
+          nif-version: ${{ matrix.nif }}
+          use-cross: ${{ matrix.job.use-cross }}
+          project-dir: native/pact_ex_nif
+
+      # The tarball must hold only the pact_ex_nif library. pact_ffi's own
+      # cdylib must not ship in it.
+      - name: Check the tarball contents
+        shell: bash
+        run: |
+          entries=$(tar -tzf "${{ steps.build.outputs.file-path }}")
+          echo "$entries"
+          if [ "$(echo "$entries" | wc -l | tr -d ' ')" != "1" ]; then
+            echo "::error::Expected a single file in the tarball"
+            exit 1
+          fi
+          case "$entries" in
+            libpact_ex_nif-v${PROJECT_VERSION}-nif-${{ matrix.nif }}-${{ matrix.job.target }}.so) ;;
+            *)
+              echo "::error::Unexpected tarball entry: $entries"
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.build.outputs.file-name }}
+          path: ${{ steps.build.outputs.file-path }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.build.outputs.file-path }}
