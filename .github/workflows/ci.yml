@@ -60,4 +60,6 @@ jobs:
         env:
           MIX_ENV: test
 
+      # Includes the abort matrix (test/abort_matrix_test.exs, tag
+      # :abort_matrix), which runs each risky input in its own OS process.
       - run: mix test
