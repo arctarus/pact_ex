@@ -7,7 +7,7 @@ defmodule PactEx.HTTP.Response do
   defstruct status: nil, headers: %{}, body: nil, content_type: nil
 
   @type t :: %__MODULE__{
-          status: pos_integer(),
+          status: 100..599,
           headers: %{String.t() => term()},
           body: term(),
           content_type: String.t() | nil

@@ -110,7 +110,7 @@ defmodule PactEx.HTTP do
   a keyword list nor a list of `{name, value}` tuples. Raises
   `FunctionClauseError` if `status` is not an integer from 100 to 599.
   """
-  @spec will_respond_with(Interaction.t(), pos_integer(), keyword()) :: Interaction.t()
+  @spec will_respond_with(Interaction.t(), 100..599, keyword()) :: Interaction.t()
   def will_respond_with(%Interaction{} = interaction, status, opts \\ [])
       when is_integer(status) and status in 100..599 do
     opts = Keyword.validate!(opts, headers: %{}, body: nil, content_type: nil)

@@ -68,6 +68,12 @@ defmodule PactEx.AbortMatrixTest do
     end
   end
 
+  test "the type matrix has a case for every explicit type and header column" do
+    # 7 explicit rows x 7 header columns. `Enum.zip/2` would drop cells if a
+    # row had too few outcomes, and `zip_exact!/3` raises when that happens.
+    assert Enum.count(AbortCases.all(), &String.starts_with?(&1.name, "types: ")) == 7 * 7
+  end
+
   test "the case names are unique and every case is pinned to :ok or :invalid" do
     names = Enum.map(AbortCases.all(), & &1.name)
     assert names == Enum.uniq(names)

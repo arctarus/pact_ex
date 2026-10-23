@@ -31,14 +31,25 @@ defmodule PactEx.Error do
   @impl true
   def message(%__MODULE__{function: function, code: code, message: message})
       when is_binary(function) do
-    if is_binary(message) and String.starts_with?(message, function) do
-      "#{message} (code #{code})"
-    else
-      "#{function} failed with code #{code}: #{message}"
+    cond do
+      # The native fallback message is "<function> failed with code <code>",
+      # so it already shows the code and the function.
+      is_binary(message) and String.starts_with?(message, function) and
+          mentions_code?(message, code) ->
+        message
+
+      is_binary(message) and String.starts_with?(message, function) ->
+        "#{message} (code #{code})"
+
+      true ->
+        "#{function} failed with code #{code}: #{message}"
     end
   end
 
   # Raised with a bare message, as in `raise PactEx.Error, "boom"`.
   def message(%__MODULE__{message: message}) when is_binary(message), do: message
   def message(%__MODULE__{}), do: "PactEx error"
+
+  # "code 1" must not match "code 10".
+  defp mentions_code?(message, code), do: Regex.match?(~r/\bcode #{code}\b/, message)
 end

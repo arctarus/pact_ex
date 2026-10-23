@@ -24,8 +24,52 @@ defmodule PactEx.ErrorTest do
           message: "pactffi_with_request failed with code 1"
         })
 
-      assert message == "pactffi_with_request failed with code 1 (code 1)"
+      assert message == "pactffi_with_request failed with code 1"
       assert length(String.split(message, "pactffi_with_request")) == 2
+    end
+
+    test "message/1 shows the code once when the native message already has it" do
+      for {code, message} <- [
+            {1, "pactffi_x failed with code 1"},
+            {-100, "pactffi_x failed with code -100"},
+            {2, "pactffi_x failed with code 2 (error message too long to read)"},
+            {3, "pactffi_x failed with code 3: no such port"}
+          ] do
+        text = Exception.message(%Error{function: "pactffi_x", code: code, message: message})
+
+        assert text == message
+        assert length(String.split(text, "code #{code}")) == 2
+      end
+    end
+
+    test "message/1 adds the code when the native message starts with the function but omits it" do
+      message =
+        Exception.message(%Error{function: "pactffi_x", code: 4, message: "pactffi_x: no pact"})
+
+      assert message == "pactffi_x: no pact (code 4)"
+    end
+
+    test "message/1 does not take another code for this one" do
+      message =
+        Exception.message(%Error{
+          function: "pactffi_x",
+          code: 1,
+          message: "pactffi_x failed with code 10"
+        })
+
+      assert message == "pactffi_x failed with code 10 (code 1)"
+    end
+
+    test "message/1 shows the code once for a PactEx input error" do
+      message =
+        Exception.message(%Error{
+          function: "PactEx.Consumer.start_mock_server/3",
+          code: -101,
+          message: "unsupported request path: 42"
+        })
+
+      assert message ==
+               "PactEx.Consumer.start_mock_server/3 failed with code -101: unsupported request path: 42"
     end
 
     test "can be raised with a message" do

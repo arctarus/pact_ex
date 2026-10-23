@@ -188,7 +188,8 @@ defmodule PactEx.AbortCases do
   #   * plain xml, padded xml, matcher padded: the string, trimmed, is
   #     `application/xml`, so XML wins unless an explicit type parses first;
   #   * json text: the string `{"value":"application/xml"}` is not a content
-  #     type pact_models parses as XML, so it adds nothing;
+  #     type at all. The Mime parser does not read it (it is JSON text, not
+  #     `type/subtype`), so `classify/1` skips it and it adds no candidate;
   #   * atom map, nested list matcher: `header_value/1` only reads a string
   #     under the "value" key, and these have an atom key or a list value, so
   #     they add no candidate.
@@ -238,7 +239,7 @@ defmodule PactEx.AbortCases do
     ]
 
     for {en, eopts, expected} <- explicit,
-        {{hn, hopts}, expect} <- Enum.zip(headers, expected) do
+        {{hn, hopts}, expect} <- zip_exact!(en, headers, expected) do
       case_response(
         "types: explicit #{en}, header #{hn}",
         expect,
@@ -246,6 +247,18 @@ defmodule PactEx.AbortCases do
         @bad_description
       )
     end
+  end
+
+  # `Enum.zip/2` stops at the shorter list, so a row with a missing outcome
+  # would silently lose cells of the matrix. Fail when the lengths differ.
+  defp zip_exact!(row, headers, expected) do
+    if length(headers) != length(expected) do
+      raise ArgumentError,
+            "type matrix row #{inspect(row)} has #{length(expected)} expected outcomes " <>
+              "for #{length(headers)} header columns"
+    end
+
+    Enum.zip(headers, expected)
   end
 
   # Each kind of body under XML types.

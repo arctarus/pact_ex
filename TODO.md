@@ -11,7 +11,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 - [ ] Builder NIFs and resource `Drop` take the global `PACT_HANDLES` lock on normal schedulers, so they can stall while a pact write runs. Document it, or make them `DirtyCpu`.
 - [ ] A huge `examples` count in an XML description can stall `with_body` or run out of memory. It isn't rejected, because pact_ffi accepts it.
 - [ ] pact_ffi silently drops a form value whose matcher fails to build (e.g. `regex` without `"regex"`).
-- [ ] `PactEx.Error.message/1` repeats the code twice ("… failed with code 1 (code 1)").
 - [ ] Rust cleanups:
   - the `Created` wrapper is redundant, since the `Result` encoder already does its job;
   - the `Outcome` encoder has an unneeded `clone`;
@@ -22,7 +21,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: tests
 
-- [ ] Abort matrix: assert `length(expected) == length(headers)` per row (`Enum.zip` silently truncates); fix the comment reason at `abort_cases.ex` ~190 (Mime doesn't parse the JSON-text header at all).
 - [ ] `large_body_test.exs`: restore microstate accounting in `on_exit`; the `dirty > 0` assertion could false-pass on an unrelated dirty GC.
 - [ ] No test for the non-UTF-8 candidate branch in `Apply.classify/1`.
 - [ ] No collision test for a query matcher map.
@@ -39,7 +37,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 - [ ] README: make the "sniffed as JSON" wording precise. pact_models' regex needs `{` followed by `}` or `"\w`, and allows leading Unicode whitespace.
 - [ ] The error message for valid JSON nested deeper than serde_json's limit of 128 says "not valid JSON". Mention the nesting limit.
-- [ ] The `@spec` of `will_respond_with/3` and the `Response` `@type` say `pos_integer()`. The guard is `100..599`.
 - [ ] The `regex/2` doc should justify `term()` values with non-string JSON body values.
 - [ ] RELEASING: the note on SHA pins should mention that `dtolnay/rust-toolchain` is pinned to a branch head.
 
