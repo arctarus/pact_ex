@@ -82,8 +82,9 @@ For more control, use `PactEx.Consumer.start_mock_server/3`, then
 | A UTF-8 string | Text, byte for byte. The content type is `content_type:` if you pass it, otherwise the interaction's `Content-Type` header, otherwise `text/plain`. |
 | A binary that is not valid UTF-8, or has NUL bytes | A binary body. The content type follows the same order, with `application/octet-stream` as the last default. |
 
-The `Content-Type` header is only used when its value is a plain string. Any
-other body type returns `{:error, %PactEx.Error{}}`.
+The `Content-Type` header is used when its value is a string. If the value is a
+list, its first element is used if that is a string. Any other body type
+returns `{:error, %PactEx.Error{}}`.
 
 ```elixir
 PactEx.HTTP.with_request(interaction, :post, "/notes",
@@ -155,7 +156,7 @@ PactEx.Log.init(level: :debug, sink: {:file, "tmp/pact.log"})
 
 ## Building from source
 
-Precompiled NIFs are the default. To compile the NIF yourself you need Rust 1.88
+Precompiled NIFs are the default. To compile the NIF yourself you need Rust 1.91
 or later and a C compiler:
 
 ```sh
@@ -192,6 +193,11 @@ Precompiled NIFs exist for NIF versions 2.16 (OTP 25) and 2.17 (OTP 26, 27 and
 | macOS | `aarch64`, `x86_64` |
 | Linux (glibc) | `aarch64`, `x86_64` |
 | Linux (musl, for example Alpine) | `aarch64`, `x86_64` |
+
+The glibc builds are made on Ubuntu 22.04 and need glibc 2.34 or later. That
+excludes Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2. On those systems,
+use the musl build (it needs the musl libc, for example on Alpine) or
+[build from source](#building-from-source).
 
 There is no Windows build. CI runs the tests on Linux and macOS with OTP 27 and
 28.

@@ -2,6 +2,7 @@
 name = "pact_ex_nif"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.91"
 
 [lib]
 name = "pact_ex_nif"

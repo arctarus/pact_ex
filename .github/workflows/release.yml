@@ -25,7 +25,7 @@ jobs:
           - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Read the version from the tag
         shell: bash
@@ -38,13 +38,13 @@ jobs:
           fi
           echo "PROJECT_VERSION=$version" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.job.target }}
 
       - name: Build the NIF
         id: build
-        uses: philss/rustler-precompiled-action@v1.1.5
+        uses: philss/rustler-precompiled-action@67ed0cc2d6a423e4c4cd9ad651dcc6c90f802cdb # v1.1.5
         with:
           project-name: pact_ex_nif
           project-version: ${{ env.PROJECT_VERSION }}
@@ -72,11 +72,11 @@ jobs:
               ;;
           esac
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.build.outputs.file-name }}
           path: ${{ steps.build.outputs.file-path }}
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: ${{ steps.build.outputs.file-path }}
