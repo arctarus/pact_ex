@@ -2,10 +2,6 @@
 
 Open issues from the plan 1 reviews. The full history is in the SDD ledger, which is git-ignored.
 
-## Important
-
-- [ ] **Check the release dry run.** Push the branch and open the PR, or start `release.yml` by hand. Check that all 12 build jobs pass (the aarch64-gnu and musl cross builds are untested) and that `publish` is skipped. Read the "Check the glibc floor" output of the two gnu targets. Then update the glibc 2.34 floor in README and RELEASING to the measured x86_64 value, and note the aarch64 value. Then close this item and the "Dry-run `release.yml`" item below.
-
 ## Minor: code
 
 - [ ] Decide on a literal `""` element in a Content-Type list (e.g. `["", "text/plain"]`): it is accepted today but pact_ffi stores it like the rejected empty-element case.
@@ -45,7 +41,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 ## Minor: docs
 
 - [ ] README: make the "sniffed as JSON" wording precise. pact_models' regex needs `{` followed by `}` or `"\w`, and allows leading Unicode whitespace.
-- [ ] README: the glibc 2.34 floor is measured for x86_64-gnu only. aarch64-gnu is built in a cross image.
 - [ ] The error message for valid JSON nested deeper than serde_json's limit of 128 says "not valid JSON". Mention the nesting limit.
 - [ ] The `@spec` of `will_respond_with/3` and the `Response` `@type` say `pos_integer()`. The guard is `100..599`.
 - [ ] The `regex/2` doc should justify `term()` values with non-string JSON body values.
@@ -54,7 +49,7 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 ## Before the first release
 
 - [ ] release.yml hardening: run `readelf` outside the `|| true` so a readelf failure fails the step; add `startsWith(github.ref, 'refs/tags/v')` to `publish`'s `if:`; add a `concurrency` group for PR dry runs; consider adding `lib/pact_ex/native.ex` to the `pull_request` paths. Note the x86_64 glibc limit can't trip on ubuntu-22.04 (guard only).
-- [ ] RELEASING.md: dry run skips the tag-vs-`@version` check; replace the stale `objdump -T` mention with `readelf -W --dyn-syms`; document recovery when one build leg fails on a tag push (re-run failed jobs).
+- [ ] RELEASING.md: dry run skips the tag-vs-`@version` check; document recovery when one build leg fails on a tag push (re-run failed jobs).
 - [ ] `content_type.rs` ~68: the `debug!` cost only applies when a debug subscriber is installed.
 - [ ] Confirm the source URL `https://github.com/arctarus/pact_ex` in `mix.exs` and `lib/pact_ex/native.ex`.
 - [ ] Dry-run `release.yml`, e.g. with `workflow_dispatch` or a test tag.

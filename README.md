@@ -260,11 +260,14 @@ Precompiled NIFs exist for NIF versions 2.16 (OTP 25) and 2.17 (OTP 26, 27 and
 | Linux (glibc) | `aarch64`, `x86_64` |
 | Linux (musl, for example Alpine) | `aarch64`, `x86_64` |
 
-The glibc builds are made on Ubuntu 22.04 and need glibc 2.34 or later on
-`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. That excludes
-Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2. On those systems
-`rustler_precompiled` still picks the glibc target, so the precompiled NIF
-cannot load. Build from source there (`PACT_EX_BUILD=1`, see
+The glibc builds need, as measured on the release artifacts:
+
+- `x86_64-unknown-linux-gnu`: glibc 2.34 or later (built on Ubuntu 22.04). That
+  excludes Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2.
+- `aarch64-unknown-linux-gnu`: glibc 2.18 or later (built in a `cross` image).
+
+On older systems `rustler_precompiled` still picks the glibc target, so the
+precompiled NIF cannot load. Build from source there (`PACT_EX_BUILD=1`, see
 [building from source](#building-from-source)). The musl builds are for
 musl-based systems such as Alpine, not a fallback for old glibc.
 

@@ -61,8 +61,9 @@ The two `*-unknown-linux-gnu` jobs print the highest `GLIBC_x.y` symbol version
 that the NIF needs (`readelf -W --dyn-syms`), and add it to the run summary.
 The x86_64 job fails when it is above `GLIBC_2.35`, the glibc of the
 `ubuntu-22.04` runner. The aarch64 job is built in a cross image, so it only
-reports. If the measured value differs from the "glibc 2.34" in the README,
-change the README and the last note below.
+reports. The first dry run (2026-10-23) measured `GLIBC_2.34` for x86_64 and
+`GLIBC_2.18` for aarch64, as the README states. If a run reports different
+values, update the README and the note below.
 
 ## Check the artifact contents
 
@@ -87,7 +88,8 @@ fails if it holds anything else. `priv/` is git-ignored and not in the package.
   trailing comment. To update one, resolve the new tag to its commit (for an
   annotated tag, the commit it points to) and change both.
 - The `x86_64-unknown-linux-gnu` NIF is built natively on `ubuntu-22.04` and
-  needs glibc 2.34 or later (`objdump -T libpact_ex_nif.so | grep GLIBC_`). The
-  README says so. Keep the two in sync if the runner changes.
+  needs glibc 2.34 or later; the `aarch64-unknown-linux-gnu` NIF needs 2.18
+  (`readelf -W --dyn-syms libpact_ex_nif.so | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1`).
+  The README says so. Keep the two in sync if the runner or cross image changes.
 - `rust-version` in `native/pact_ex_nif/Cargo.toml` follows the locked
   `rustler`. Check it when you update `Cargo.lock`.
