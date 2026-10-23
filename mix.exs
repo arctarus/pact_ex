@@ -14,7 +14,12 @@ defmodule PactEx.MixProject do
       deps: deps(),
       description: "Pact contract testing for Elixir, built on the pact_ffi Rust library.",
       package: package(),
-      source_url: @source_url
+      source_url: @source_url,
+      docs: [
+        main: "readme",
+        extras: ["README.md", "CHANGELOG.md"],
+        source_ref: "v#{@version}"
+      ]
     ]
   end
 
