@@ -5,7 +5,11 @@ defmodule PactEx.MockServerTest do
 
   @moduletag :tmp_dir
 
-  setup %{tmp_dir: dir} do
+  # Cleanup kills whatever server is registered on a port, and the OS can hand
+  # a freed port to a concurrent test. So a test owns its port until it stops
+  # the server, and `on_exit` only stops servers the test still owns. Tests
+  # that stop the server themselves are tagged `:stops`.
+  setup %{tmp_dir: dir} = context do
     pact = PactEx.new("mock-consumer", "mock-provider", pact_dir: dir)
 
     i =
@@ -14,7 +18,7 @@ defmodule PactEx.MockServerTest do
       |> HTTP.will_respond_with(200, body: "pong")
 
     {:ok, mock} = Consumer.start_mock_server(pact, [i])
-    on_exit(fn -> MockServer.stop(mock) end)
+    unless context[:stops], do: on_exit(fn -> MockServer.stop(mock) end)
     %{mock: mock, pact_file: Path.join(dir, "mock-consumer-mock-provider.json")}
   end
 
@@ -151,14 +155,23 @@ defmodule PactEx.MockServerTest do
     assert message =~ "could not write the pact file"
   end
 
-  test "stop/1 shuts the server down and is idempotent", %{mock: mock} do
+  @tag :stops
+  test "stop/1 shuts the server down", %{mock: mock} do
     assert :ok = MockServer.stop(mock)
     # Read-only probe: a cleanup could kill a concurrent test's server on a reused port.
     assert PactEx.Native.mock_server_mismatches(mock.port) == nil
-    assert :ok = MockServer.stop(mock)
     assert {:error, _} = Req.get(mock.url <> "/ping", retry: false)
   end
 
+  test "stop/1 on a port that is not served returns :ok and leaves other servers alone", %{
+    mock: mock
+  } do
+    # Port 1 is never served, so this cleanup cannot hit a concurrent test's server.
+    assert :ok = MockServer.stop(%{mock | port: 1})
+    assert %{status: 200} = Req.get!(mock.url <> "/ping", retry: false)
+  end
+
+  @tag :stops
   test "after stop/1, queries return neutral values and write_pact/2 returns an error", %{
     mock: mock
   } do
