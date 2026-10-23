@@ -151,7 +151,8 @@ defmodule PactEx.MockServerTest do
 
   test "stop/1 shuts the server down and is idempotent", %{mock: mock} do
     assert :ok = MockServer.stop(mock)
-    refute PactEx.Native.cleanup_mock_server(mock.port)
+    # Read-only probe: a cleanup could kill a concurrent test's server on a reused port.
+    assert PactEx.Native.mock_server_mismatches(mock.port) == nil
     assert :ok = MockServer.stop(mock)
     assert {:error, _} = Req.get(mock.url <> "/ping", retry: false)
   end

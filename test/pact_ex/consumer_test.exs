@@ -11,6 +11,13 @@ defmodule PactEx.ConsumerTest do
 
   defp bad(value), do: Function.identity(value)
 
+  # Read-only check that no server is registered on `port`. A cleanup would
+  # kill a concurrent test's server if the OS reused the port.
+  defp assert_stopped(port) do
+    assert PactEx.Native.mock_server_mismatches(port) == nil
+    refute PactEx.Native.mock_server_matched(port)
+  end
+
   defp pact_path(dir), do: Path.join(dir, "consumer-test-provider-test.json")
 
   defp read_pact(dir), do: dir |> pact_path() |> File.read!() |> JSON.decode!()
@@ -123,8 +130,8 @@ defmodule PactEx.ConsumerTest do
       end
 
       assert_received {:port, port}
-      # Already cleaned up by run/4, so a second cleanup finds no server.
-      refute PactEx.Native.cleanup_mock_server(port)
+      # Read-only probe: never clean up a port this test no longer owns.
+      assert_stopped(port)
       refute File.exists?(pact_path(dir))
     end
 
@@ -141,7 +148,7 @@ defmodule PactEx.ConsumerTest do
                )
 
       assert_received {:port, port}
-      refute PactEx.Native.cleanup_mock_server(port)
+      assert_stopped(port)
 
       assert {:shutdown, :bye} ==
                catch_exit(
@@ -152,7 +159,7 @@ defmodule PactEx.ConsumerTest do
                )
 
       assert_received {:port, port}
-      refute PactEx.Native.cleanup_mock_server(port)
+      assert_stopped(port)
       refute File.exists?(pact_path(dir))
     end
 
@@ -1126,7 +1133,7 @@ defmodule PactEx.ConsumerTest do
       assert :ok = PactEx.MockServer.write_pact(mock)
       assert File.exists?(pact_path(dir))
       assert :ok = PactEx.MockServer.stop(mock)
-      refute PactEx.Native.cleanup_mock_server(port)
+      assert_stopped(port)
     end
 
     test "uses an OS-assigned port by default and distinct ports for concurrent servers", %{

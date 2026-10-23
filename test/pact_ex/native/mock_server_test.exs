@@ -304,10 +304,10 @@ defmodule PactEx.Native.MockServerTest do
       assert descriptions.() == ["three"]
     end
 
-    test "cleanup_mock_server stops the server and a second cleanup returns false" do
+    test "cleanup_mock_server stops the server and leaves nothing registered on its port" do
       {:ok, port} = Native.create_mock_server(ping_pact(), "127.0.0.1", 0, "http", nil)
       assert Native.cleanup_mock_server(port)
-      refute Native.cleanup_mock_server(port)
+      # Read-only probes: a second cleanup could kill a concurrent test's server.
       refute Native.mock_server_matched(port)
       assert Native.mock_server_mismatches(port) == nil
     end

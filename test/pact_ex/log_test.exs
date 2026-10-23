@@ -99,5 +99,13 @@ defmodule PactEx.LogTest do
 
     assert Log.init(level: :info, sink: {:file, Path.join(dir, "other.log")}) ==
              {:error, :already_initialized}
+
+    # An attach failure is still reported as such after a logger was applied,
+    # because attaching happens before the apply check. This holds whatever the
+    # test order, since it runs here, after the successful apply.
+    assert {:error, %Error{function: "pactffi_logger_attach_sink", code: -6} = error} =
+             Log.init(sink: {:file, dir})
+
+    assert error.message == "could not open log file #{dir}"
   end
 end
