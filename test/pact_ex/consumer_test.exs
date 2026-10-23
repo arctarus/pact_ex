@@ -1166,13 +1166,14 @@ defmodule PactEx.ConsumerTest do
 
       assert :ok =
                Consumer.run(pact, [i], fn m ->
+                 # Req's own keyword form: it turns `x_multi` into `x-multi`.
                  resp =
                    Req.get!(m.url <> "/k?tag=a&page=2&tag=b&active=true",
                      headers: [
-                       {"x-trace", "1"},
-                       {"accept", "application/json"},
-                       {"x_multi", "m1"},
-                       {"x_multi", "m2"}
+                       {"X-Trace", "1"},
+                       accept: "application/json",
+                       x_multi: "m1",
+                       x_multi: "m2"
                      ],
                      retry: false
                    )
@@ -1193,9 +1194,70 @@ defmodule PactEx.ConsumerTest do
 
       assert written["request"]["headers"]["X-Trace"] == ["1"]
       assert written["request"]["headers"]["accept"] == ["application/json"]
-      assert written["request"]["headers"]["x_multi"] == ["m1", "m2"]
+      assert written["request"]["headers"]["x-multi"] == ["m1", "m2"]
       assert written["response"]["headers"]["x-out"] == ["o1", "o2"]
       assert written["response"]["headers"]["etag"] == ["abc"]
+    end
+
+    test "atom header names are dashed like Req does, in a map and in a list", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("atom headers")
+        |> HTTP.with_request(:post, "/a",
+          headers: %{"x_kept" => "k", content_type: "application/json", x_request_id: "1"},
+          body: %{"a" => 1}
+        )
+        |> HTTP.will_respond_with(200,
+          headers: [x_out_id: "o", content_type: "text/plain"],
+          body: "ok"
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.post!(m.url <> "/a",
+                     json: %{a: 1},
+                     headers: [{"x_kept", "k"}, x_request_id: "1"],
+                     decode_body: false,
+                     retry: false
+                   )
+
+                 assert resp.status == 200
+                 assert Req.Response.get_header(resp, "x-out-id") == ["o"]
+                 assert Req.Response.get_header(resp, "content-type") == ["text/plain"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["request"]["headers"]["Content-Type"] == ["application/json"]
+      assert written["request"]["headers"]["x-request-id"] == ["1"]
+      assert written["request"]["headers"]["x_kept"] == ["k"]
+
+      assert Map.keys(written["request"]["headers"]) |> Enum.sort() ==
+               ["Content-Type", "x-request-id", "x_kept"]
+
+      assert written["response"]["headers"]["x-out-id"] == ["o"]
+      assert written["response"]["headers"]["Content-Type"] == ["text/plain"]
+    end
+
+    test "an atom header name with an underscore canonicalises Content-Type", %{pact: pact} do
+      for headers <- [%{content_type: "text/plain"}, [content_type: "text/plain"]] do
+        i =
+          HTTP.interaction("content_type atom")
+          |> HTTP.with_request(:post, "/ct", headers: headers, body: "hi")
+          |> HTTP.will_respond_with(200)
+
+        assert :ok =
+                 Consumer.run(pact, [i], fn m ->
+                   assert %{status: 200} =
+                            Req.post!(m.url <> "/ct",
+                              body: "hi",
+                              headers: [content_type: "text/plain"],
+                              retry: false
+                            )
+                 end)
+      end
     end
 
     test "the same interaction with maps gives the same pact file", %{pact: pact, tmp_dir: dir} do
@@ -1247,9 +1309,11 @@ defmodule PactEx.ConsumerTest do
   end
 
   describe "run/4 empty Content-Type values and empty lists of values" do
-    # pact_ffi records an empty or blank Content-Type as an empty string, which
-    # no client sends: the mock server answers 500 for every request. A `[]`
-    # value for a header or query parameter wrote nothing and was dropped.
+    # pact_ffi records an empty or blank Content-Type as an empty string. On a
+    # request no client sends it, so no request can match it (the mock server
+    # answers 500). On a response the mock server would serve a meaningless
+    # header that no provider can produce. A `[]` value for a header or query
+    # parameter wrote nothing and was dropped.
     @blank_headers [
       {"empty string", %{"Content-Type" => ""}},
       {"blank string", %{"Content-Type" => "  "}},
@@ -1312,7 +1376,7 @@ defmodule PactEx.ConsumerTest do
     end
 
     test "a request header of [] is rejected, naming the header", %{pact: pact, tmp_dir: dir} do
-      for name <- ["x-id", :x_id, "Content-Type"] do
+      for {name, shown} <- [{"x-id", "x-id"}, {:x_id, "x-id"}, {"Content-Type", "Content-Type"}] do
         i =
           HTTP.interaction("empty request header")
           |> HTTP.with_request(:get, "/h", headers: %{name => []})
@@ -1324,7 +1388,7 @@ defmodule PactEx.ConsumerTest do
 
         assert function == "PactEx.Consumer.start_mock_server/3"
         assert message =~ "request header"
-        assert message =~ ~s("#{name}")
+        assert message =~ ~s("#{shown}")
         assert message =~ "empty list"
       end
 
@@ -1374,7 +1438,7 @@ defmodule PactEx.ConsumerTest do
       refute File.exists?(pact_path(dir))
     end
 
-    test "a bad interaction after a good one stops everything before any server starts", %{
+    test "a bad interaction after a good one returns -101", %{
       pact: pact
     } do
       bad =

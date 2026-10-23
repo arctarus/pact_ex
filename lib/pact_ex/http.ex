@@ -65,16 +65,26 @@ defmodule PactEx.HTTP do
   is `%{"tag" => ["a", "b"]}`. A list value counts as several values:
   `[tag: ["a", "b"], tag: "c"]` is `%{"tag" => ["a", "b", "c"]}`, and an empty
   list adds nothing (a name whose values are all empty is an error when the
-  interaction is applied, as in a map). Query names
-  are case-sensitive, so `"Tag"` and `"tag"` stay apart. Header names are not:
+  interaction is applied, as in a map). Query names are case-sensitive, so
+  `"Tag"` and `"tag"` stay apart. Header names are not: in a list,
   `[{"Accept", "a"}, accept: "b"]` is `%{"Accept" => ["a", "b"]}`, with the
-  first spelling kept. A list is the only place where this merging happens:
-  the names in a map are never merged.
+  first spelling kept. That includes `Content-Type`: a list merges its
+  spellings into one header with several values, while a map with two
+  spellings of it is an error when the interaction is applied. A map is never
+  merged.
+
+  A header name that is an atom is written as Req writes it: underscores
+  become dashes and ASCII letters lower case, so `x_request_id: "1"` is the
+  header `"x-request-id"` and `content_type: "text/plain"` is `Content-Type`.
+  This holds for a map as well as for a list. A header name that is a string
+  is used as it is (`"x_id"` stays `"x_id"`). Query names are not changed:
+  `page_size: 2` is the parameter `"page_size"`.
 
   Raises `ArgumentError` on unknown options, or if `:query` or `:headers` is
   neither a map, a keyword list nor a list of `{name, value}` tuples (a name
-  must be a string or an atom other than `nil`, `true` and `false`). Raises `FunctionClauseError` if `method` is not a string or an
-  atom other than `nil`, `true` and `false`, or if `path` is not a string or a map.
+  must be a string or an atom other than `nil`, `true` and `false`). Raises
+  `FunctionClauseError` if `method` is not a string or an atom other than
+  `nil`, `true` and `false`, or if `path` is not a string or a map.
   """
   @spec with_request(Interaction.t(), atom() | String.t(), String.t() | map(), keyword()) ::
           Interaction.t()
@@ -85,8 +95,8 @@ defmodule PactEx.HTTP do
     request = %Request{
       method: normalize_method(method),
       path: path,
-      query: fetch_params!(opts, :query, false),
-      headers: fetch_params!(opts, :headers, true),
+      query: fetch_params!(opts, :query),
+      headers: fetch_params!(opts, :headers),
       body: Keyword.fetch!(opts, :body),
       content_type: Keyword.fetch!(opts, :content_type)
     }
@@ -117,7 +127,7 @@ defmodule PactEx.HTTP do
 
     response = %Response{
       status: status,
-      headers: fetch_params!(opts, :headers, true),
+      headers: fetch_params!(opts, :headers),
       body: Keyword.fetch!(opts, :body),
       content_type: Keyword.fetch!(opts, :content_type)
     }
@@ -127,20 +137,30 @@ defmodule PactEx.HTTP do
 
   # A map is kept as it is. A list of `{name, value}` pairs becomes a map with
   # string names. A repeated name gets all its values in order, and a list
-  # value counts as several. With `fold_case?` (headers) names that differ
-  # only in case are one name, and the first spelling is kept.
-  defp fetch_params!(opts, key, fold_case?) do
+  # value counts as several. Header names that differ only in case are one
+  # name, and the first spelling is kept.
+  defp fetch_params!(opts, key) do
     case Keyword.fetch!(opts, key) do
       value when is_map(value) ->
         value
 
       value when is_list(value) ->
-        if pairs?(value), do: merge_pairs(value, fold_case?), else: invalid_params!(key, value)
+        if pairs?(value), do: merge_pairs(value, key), else: invalid_params!(key, value)
 
       other ->
         invalid_params!(key, other)
     end
   end
+
+  @doc false
+  # The name of a header that is an atom, as Req writes it
+  # (`Req.Fields`): underscores become dashes and ASCII letters lower case, so
+  # `:x_request_id` is `"x-request-id"`. A string name is used as it is.
+  @spec header_name(atom() | String.t()) :: String.t()
+  def header_name(name) when is_binary(name), do: name
+
+  def header_name(name) when is_atom(name),
+    do: name |> Atom.to_string() |> String.replace("_", "-") |> String.downcase(:ascii)
 
   defp invalid_params!(key, value) do
     raise ArgumentError,
@@ -156,15 +176,24 @@ defmodule PactEx.HTTP do
   defp valid_name?(name) when is_binary(name), do: true
   defp valid_name?(name), do: is_atom(name) and name not in [nil, true, false]
 
-  defp merge_pairs(pairs, fold_case?) do
+  defp merge_pairs(pairs, key) do
     pairs
     |> Enum.reduce(%{}, fn {name, value}, acc ->
-      name = to_string(name)
-      folded = if fold_case?, do: String.downcase(name), else: name
+      {name, folded} = param_name(key, name)
 
       Map.update(acc, folded, {name, [value]}, fn {first, values} -> {first, [value | values]} end)
     end)
     |> Map.new(fn {_folded, {name, values}} -> {name, join_values(Enum.reverse(values))} end)
+  end
+
+  defp param_name(:headers, name) do
+    name = header_name(name)
+    {name, String.downcase(name)}
+  end
+
+  defp param_name(:query, name) do
+    name = to_string(name)
+    {name, name}
   end
 
   defp join_values([single]), do: single

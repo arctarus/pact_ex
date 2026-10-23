@@ -24,7 +24,10 @@ defmodule PactEx.Consumer do
       floats or booleans, which become strings. A list gives a multi-valued
       parameter. `nil`, an empty list and other types are rejected: an empty
       list would drop the parameter without a word.
-    * Query and header names are strings or atoms.
+    * Query and header names are strings or atoms. An atom header name is
+      written as Req writes it: underscores become dashes and ASCII letters
+      lower case (`:x_request_id` is `"x-request-id"`). Query names and
+      string names are not changed.
     * Each request and response has one body content type. The candidates are
       the `:content_type` option, the `Content-Type` header, and the default
       of the body type. Each is trimmed and the first one that pact_ffi can
@@ -40,9 +43,10 @@ defmodule PactEx.Consumer do
       `{:error, %PactEx.Error{code: -101}}`, with or without a body. That
       holds for any element of a list. As the whole header or the last
       element, pact_ffi aborts the VM on it. Before a later element, it
-      records an empty string that no client can match. An empty or
-      whitespace-only string (as the value, an element or a matcher's
-      `"value"`) is rejected too.
+      records an empty string. An empty or whitespace-only string (as the
+      value, an element or a matcher's `"value"`) is rejected too. On a
+      request no request of the interaction can match such a header, and on
+      a response no provider can produce it.
     * The default is `application/json` for a map or list, `text/plain` for a
       string that is valid UTF-8 without NUL bytes, and
       `application/octet-stream` for any other binary.

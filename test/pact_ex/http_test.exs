@@ -327,7 +327,7 @@ defmodule PactEx.HTTPTest do
 
     test "a keyword list becomes a map with string names" do
       assert request_of(headers: [accept: "json", x_id: "1"]).headers ==
-               %{"accept" => "json", "x_id" => "1"}
+               %{"accept" => "json", "x-id" => "1"}
 
       assert request_of(query: [page: 2, active: true]).query == %{"page" => 2, "active" => true}
       assert response_of(headers: [etag: "abc"]).headers == %{"etag" => "abc"}
@@ -377,6 +377,30 @@ defmodule PactEx.HTTPTest do
     test "an empty list value is kept alone, and adds nothing next to other values" do
       assert request_of(query: [tag: []]).query == %{"tag" => []}
       assert request_of(query: [tag: [], tag: "a"]).query == %{"tag" => ["a"]}
+    end
+
+    test "atom header names are dashed and lower-cased like Req does, string names are kept" do
+      assert request_of(headers: [content_type: "a/b", x_request_id: "1", Accept: "x"]).headers ==
+               %{"content-type" => "a/b", "x-request-id" => "1", "accept" => "x"}
+
+      assert response_of(headers: [x_out_id: "o", "X_Mixed-Case": "m"]).headers ==
+               %{"x-out-id" => "o", "x-mixed-case" => "m"}
+
+      assert request_of(headers: [{"x_kept", "1"}, {"X_Kept2", "2"}]).headers ==
+               %{"x_kept" => "1", "X_Kept2" => "2"}
+    end
+
+    test "atom and string header names merge after the atom is dashed" do
+      assert request_of(headers: [{"X-Request-Id", "a"}, x_request_id: "b"]).headers ==
+               %{"X-Request-Id" => ["a", "b"]}
+
+      assert request_of(headers: [{"x_request_id", "a"}, x_request_id: "b"]).headers ==
+               %{"x_request_id" => "a", "x-request-id" => "b"}
+    end
+
+    test "atom query names are not dashed" do
+      assert request_of(query: [page_size: 2, tag_name: "a", tag_name: "b"]).query ==
+               %{"page_size" => 2, "tag_name" => ["a", "b"]}
     end
 
     test "query names are case-sensitive, so different case stays apart" do

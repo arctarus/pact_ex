@@ -133,6 +133,66 @@ defmodule PactEx.Consumer.ApplyTest do
     end
   end
 
+  describe "validate/1: values and names that cannot be applied" do
+    # `validate/1` only plans: it makes no native call. So an error here proves
+    # the check runs before any native call.
+    test "a nil or unsupported query or header value is rejected, naming the key" do
+      for value <- [nil, {:a}, :atom, ["a", nil], %{:a => 1, "a" => 2}] do
+        request_q = HTTP.interaction("v") |> HTTP.with_request(:get, "/v", query: %{"k" => value})
+
+        request_h =
+          HTTP.interaction("v") |> HTTP.with_request(:get, "/v", headers: %{"k" => value})
+
+        response =
+          HTTP.interaction("v")
+          |> HTTP.with_request(:get, "/v")
+          |> HTTP.will_respond_with(200, headers: %{"k" => value})
+
+        for {i, label} <- [
+              {request_q, "query parameter"},
+              {request_h, "request header"},
+              {response, "response header"}
+            ] do
+          assert {:error, %PactEx.Error{code: -101, function: @entry, message: message}} =
+                   Apply.validate(i),
+                 "#{label} #{inspect(value)}"
+
+          assert message =~ ~s("k")
+          assert message =~ label
+        end
+      end
+    end
+
+    test "a name that is not a string or an atom is rejected" do
+      for name <- [1, {:a}, nil, true] do
+        request_q = HTTP.interaction("n") |> HTTP.with_request(:get, "/n", query: %{name => "a"})
+
+        request_h =
+          HTTP.interaction("n") |> HTTP.with_request(:get, "/n", headers: %{name => "a"})
+
+        for i <- [request_q, request_h] do
+          assert {:error, %PactEx.Error{code: -101, message: message}} = Apply.validate(i),
+                 inspect(name)
+
+          assert message =~ "name"
+        end
+      end
+    end
+
+    test "valid scalars, matchers and lists pass" do
+      matcher = %{"pact:matcher:type" => "type", "value" => "x"}
+
+      i =
+        HTTP.interaction("ok")
+        |> HTTP.with_request(:get, "/ok",
+          query: %{"a" => 1, "b" => 1.5, "c" => true, "d" => matcher, "e" => ["x", 2]},
+          headers: %{"h" => matcher}
+        )
+
+      assert :ok = Apply.validate(i)
+    end
+  end
+
   test "returns an error naming the interaction when the request is missing" do
     i = HTTP.interaction("lonely") |> HTTP.will_respond_with(200)
 
@@ -333,6 +393,33 @@ defmodule PactEx.Consumer.ApplyTest do
       assert {:error, %PactEx.Error{code: -101}} = Apply.validate(i)
     end
 
+    test "the reason depends on the side, for an empty list and for a blank value" do
+      for value <- [
+            @empty,
+            "",
+            " ",
+            ["text/plain", @empty],
+            ["", "text/plain"],
+            %{"value" => " "}
+          ] do
+        assert {:error, %{message: request}} =
+                 Apply.validate(request_with(%{"Content-Type" => value}))
+
+        assert {:error, %{message: response}} =
+                 Apply.validate(response_with(%{"Content-Type" => value}))
+
+        assert request =~ "no request of this interaction can match it", inspect(value)
+        refute request =~ "provider", inspect(value)
+        assert response =~ "a meaningless header that no provider can produce", inspect(value)
+        refute response =~ "no request", inspect(value)
+
+        for message <- [request, response] do
+          refute message =~ "500", inspect(value)
+          refute message =~ "every request", inspect(value)
+        end
+      end
+    end
+
     test "the message names the part" do
       assert {:error, %{message: "response header" <> _}} =
                Apply.validate(response_with(%{"Content-Type" => @empty}))
@@ -391,15 +478,13 @@ defmodule PactEx.Consumer.ApplyTest do
       assert :ok = Apply.validate(response_with(%{"Content-Type" => <<255, 254>>}))
     end
 
-    test "a map that cannot be encoded is left to the usual encoding error" do
+    test "a map that cannot be encoded returns the usual encoding error" do
       i = response_with(%{"Content-Type" => %{:value => [], "value" => []}})
 
-      assert :ok = Apply.validate(i)
-
-      assert {:error, %PactEx.Error{code: -101, message: message}} =
-               Apply.interaction(pact_ref(), i)
-
-      assert message =~ "cannot encode"
+      for result <- [Apply.validate(i), Apply.interaction(pact_ref(), i)] do
+        assert {:error, %PactEx.Error{code: -101, message: message}} = result
+        assert message =~ "cannot encode"
+      end
     end
 
     test "interaction/2 returns the same error" do

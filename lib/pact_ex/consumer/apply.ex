@@ -41,6 +41,7 @@ defmodule PactEx.Consumer.Apply do
 
   alias PactEx.{Error, Native}
   alias PactEx.Consumer.BodyCheck
+  alias PactEx.HTTP
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -88,7 +89,8 @@ defmodule PactEx.Consumer.Apply do
   defp plan(%Interaction{description: description} = interaction) do
     response = interaction.response || %Response{status: 200}
 
-    with :ok <- check_values(interaction.request.query, "request query parameter", description),
+    with :ok <-
+           check_params(interaction.request.query, "request query parameter", description),
          {:ok, request_plan} <- plan_part(:request, description, interaction.request),
          {:ok, response_plan} <- plan_part(:response, description, response) do
       {:ok, request_plan, response_plan}
@@ -97,7 +99,7 @@ defmodule PactEx.Consumer.Apply do
 
   defp plan_part(part, description, %{body: body} = struct) do
     with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
-         :ok <- check_values(headers, "#{part} header", description),
+         :ok <- check_params(headers, "#{part} header", description),
          :ok <- check_content_type_header(headers, part, description) do
       case body do
         nil ->
@@ -147,12 +149,16 @@ defmodule PactEx.Consumer.Apply do
   #    meaningless, and other pact_models code that reads the content type of
   #    the recorded part may hit the same `v[0]`.
   #
-  # 2. An empty element makes the contract unmatchable. When an empty element
-  #    is not last, the list keeps its length and the element is stored as an
-  #    empty string: `[%{"value" => []}, "text/plain"]` is `["", "text/plain"]`.
-  #    That does not abort, but no real client sends such a header, so the
-  #    mock server answers 500 and `run` returns a `MismatchError`. So an empty
-  #    element at ANY position is rejected.
+  # 2. An empty element makes the part useless. When an empty element is not
+  #    last, the list keeps its length and the element is stored as an empty
+  #    string: `[%{"value" => []}, "text/plain"]` is `["", "text/plain"]`.
+  #    A string that is empty or only whitespace is stored the same way.
+  #    That does not abort, but on a request no real client sends such a
+  #    header, so the mock server answers 500 and `run` returns a
+  #    `MismatchError`. On a response the mock server serves it and the
+  #    request still matches, but no provider can produce such a header. So an
+  #    empty or blank element at ANY position is rejected, with a reason for
+  #    each side (`unusable/1`).
   defp check_content_type_header(headers, part, description) do
     with {"Content-Type", values} <- List.keyfind(headers, "Content-Type", 0),
          {:ok, index, kind} <- empty_element(values) do
@@ -166,16 +172,21 @@ defmodule PactEx.Consumer.Apply do
     "#{part} header \"Content-Type\" of interaction #{inspect(description)} " <>
       "has #{label} that resolves to an empty list of values. " <>
       "A \"value\" of [] leaves the header without a content type or with an " <>
-      "empty one: pact_ffi aborts the VM when it reads a missing one, and no " <>
-      "client can match an empty one. Give every element a string value."
+      "empty one: pact_ffi aborts the VM when it reads a missing one, and " <>
+      "#{unusable(part)}. Give every element a string value."
   end
 
   defp empty_message(:blank, part, description, label) do
     "#{part} header \"Content-Type\" of interaction #{inspect(description)}: " <>
       "#{label} is empty or only whitespace. pact_ffi records it as an empty " <>
-      "content type, and no client sends one, so the mock server would answer " <>
-      "500 to every request. Give every element a non-blank string value."
+      "content type, and #{unusable(part)}. Give every element a non-blank string value."
   end
+
+  # Why an empty Content-Type is useless, on each side.
+  defp unusable(:request), do: "no request of this interaction can match it"
+
+  defp unusable(:response),
+    do: "the mock server would serve a meaningless header that no provider can produce"
 
   defp element_label(values, index) when is_list(values), do: "element #{index}"
   defp element_label(_value, _index), do: "the value"
@@ -238,10 +249,12 @@ defmodule PactEx.Consumer.Apply do
   defp blank_kind(value), do: if(blank?(value), do: :blank)
   defp blank?(value), do: String.trim(value) == ""
 
-  # A `[]` value for a header or query parameter writes no native call, so the
-  # parameter would be dropped without a word. `nil` is an error too.
-  defp check_values(params, label, description) do
-    Enum.find_value(params, :ok, fn
+  # Every header and query parameter is checked here, before any native call:
+  # its name, and each of its values (as `indexed/3` will encode them). A `[]`
+  # value is an error too: it would make no native call, so the parameter
+  # would be dropped without a word.
+  defp check_params(params, label, description) do
+    each_ok(params, fn
       {name, []} ->
         {:error,
          invalid(
@@ -250,8 +263,10 @@ defmodule PactEx.Consumer.Apply do
              "Give it at least one value, or leave it out."
          )}
 
-      _other ->
-        nil
+      {name, values} ->
+        with {:ok, name} <- name(name, label) do
+          indexed(values, "#{label} #{inspect(name)}", fn _index, _value -> :ok end)
+        end
     end)
   end
 
@@ -407,6 +422,12 @@ defmodule PactEx.Consumer.Apply do
     end)
   end
 
+  # An atom header name is written like Req writes it (`HTTP.header_name/1`).
+  defp header_name(name, _label) when is_atom(name) and name not in [nil, true, false],
+    do: {:ok, HTTP.header_name(name)}
+
+  defp header_name(name, label), do: name(name, label)
+
   defp name(name, _label) when is_binary(name), do: {:ok, name}
 
   defp name(name, _label) when is_atom(name) and name not in [nil, true, false],
@@ -437,7 +458,7 @@ defmodule PactEx.Consumer.Apply do
   defp canonical_headers(headers, label) do
     headers
     |> Enum.reduce_while({:ok, []}, fn {name, values}, {:ok, acc} ->
-      case name(name, label) do
+      case header_name(name, label) do
         {:ok, name} -> {:cont, {:ok, [{canonical_name(name), values} | acc]}}
         {:error, _} = error -> {:halt, error}
       end

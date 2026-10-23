@@ -4,7 +4,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: code
 
-- [ ] Content-Type empty-element wording: update the module summary in `apply.ex` (~30-32) to cover the any-position rule; the "no client can match" rationale only fits the request side (response side: a provider can't produce it) in `apply.ex`, the error message, README and `consumer.ex`; reword "has its value that resolves…" and pin that non-list branch in a test.
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
 - [ ] Wrap `mock_server_matched` / `mock_server_mismatches` in `on_large_stack`. Plan 2 needs this, because plugin mock servers run gRPC `block_on` under `MANAGER`.
 - [ ] Each `mock_server_mismatches` call leaks a CString into pact_ffi until cleanup. Document it, or avoid polling.

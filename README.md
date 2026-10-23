@@ -102,13 +102,14 @@ when `content_type:` differs. A value that pact_ffi would turn into an empty
 list returns an error: a map or a JSON string with `"value" => []` (a matcher
 too), alone or as any element of a list. As the whole header, or as the last
 element, it makes pact_ffi abort the VM. Before a later element, pact_ffi
-records an empty string (`["", "text/plain"]`) that no client can match. An
-empty or whitespace-only string, as the value or as any element (also as a
-matcher's `"value"`, alone or in its array), returns an error for the same
-reason: pact_ffi records it, and the mock server would answer 500 to every
-request. The check ignores the body and `content_type:`. (An empty
-`content_type:` is not an error: it is skipped, like any value pact_ffi cannot
-parse.)
+records an empty string (`["", "text/plain"]`). An empty or whitespace-only
+string, as the value or as any element (also as a matcher's `"value"`, alone or
+in its array), returns an error too: pact_ffi records it as an empty content
+type. The reason depends on the side. On a request, no client sends such a
+header, so no request of the interaction can match it. On a response, the mock
+server would serve a meaningless header that no provider can produce. The check
+ignores the body and `content_type:`. (An empty `content_type:` is not an
+error: it is skipped, like any value pact_ffi cannot parse.)
 
 **XML and form bodies.** With an XML content type (`application/xml`,
 `text/xml`, or `application/` or `text/` with a `+xml` suffix) or
@@ -189,7 +190,13 @@ That is `%{"tag" => ["a", "b"], "limit" => 10}` for the query. A list value
 counts as several values (`[tag: ["a", "b"], tag: "c"]` has three). Query names
 are case-sensitive. Header names are not, so `[{"Accept", "a"}, accept: "b"]`
 is one header with two values, named as in its first spelling. A map is never
-merged and is used as you wrote it. Anything else (a string, a list that holds
+merged and is used as you wrote it.
+
+An atom header name is written as Req writes it, in a map and in a list:
+underscores become dashes and ASCII letters lower case, so `x_request_id: "1"`
+is the header `x-request-id` and `content_type: "text/plain"` is
+`Content-Type`. A string name is used as it is (`"x_id"` stays `"x_id"`). Query
+names are not changed (`page_size: 2` is `page_size`). Anything else (a string, a list that holds
 something other than a `{name, value}` tuple) raises `ArgumentError`.
 
 `nil` and other types return `{:error, %PactEx.Error{}}`. So does an empty list

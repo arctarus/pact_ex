@@ -65,14 +65,17 @@ for it. A tag push is never cancelled.
 ## If a build job fails on a tag push
 
 `fail-fast` is off, so the other build jobs finish, and `publish` does not run.
-Nothing is released. Fix the cause, then:
+Nothing is released. Find the cause first, then pick one:
 
-- for a flaky failure (a runner or network error), open the run in Actions and
+- a flaky failure (a runner or network error): open the run in Actions and
   choose "Re-run failed jobs". The jobs that passed keep their artifacts, and
-  once every build job has passed, `publish` runs and uploads all 12 files;
-- for a real failure, fix it on `main`, delete the tag locally and on the
-  remote, and tag the new commit with the same version. Do this only if nothing
-  was published. A re-run uses the commit the tag pointed to when it was pushed,
+  once every build job has passed, `publish` runs and uploads all 12 files.
+  The artifacts are kept for `retention-days: 7`. After that a re-run builds
+  only the failed jobs, `publish` finds fewer than 12 files and fails its
+  check. Then push a new tag, or choose "Re-run all jobs";
+- a real failure: fix it on `main`, delete the tag locally and on the remote,
+  and tag the new commit with the same version. Do this only if nothing was
+  published. A re-run uses the commit the tag pointed to when it was pushed,
   so it cannot pick up a fix.
 
 Check the GitHub release before publishing to Hex: it must list all 12 files.
