@@ -10,9 +10,15 @@ defmodule PactEx.Consumer.Apply do
   #   * a list value becomes one native call per element, using its index;
   #   * a map or list body is JSON, a valid UTF-8 binary without NUL is text,
   #     any other binary is sent as binary;
-  #   * a binary body without an explicit content type takes the value of the
-  #     interaction's Content-Type header (case-insensitive) when it is a
-  #     plain string, before the defaults above.
+  #   * each part (request or response) has one content type, chosen in this
+  #     order: the explicit `:content_type`, the Content-Type header (name in
+  #     any case; a string, or the "value" of a matcher; the first element of
+  #     a list), then the default of the body type. It applies to every body
+  #     type, so a map body with an XML Content-Type is an XML description;
+  #   * the Content-Type header is always written as "Content-Type".
+  #     pact_ffi adds the body's content type under that exact-case key, and
+  #     a lowercase header would give the part two Content-Type entries.
+  #     Two headers that differ only in case are rejected.
 
   alias PactEx.{Error, Native}
   alias PactEx.HTTP.{Interaction, Request, Response}
@@ -67,16 +73,18 @@ defmodule PactEx.Consumer.Apply do
     with {:ok, path} <- value(request.path, "request path"),
          :ok <- native(Native.with_request(handle, request.method, path)),
          :ok <- query(handle, request.query),
-         :ok <- headers(handle, :request, request.headers) do
-      body(handle, :request, request.body, content_type(request), "request body")
+         {:ok, headers} <- canonical_headers(request.headers, "request header"),
+         :ok <- headers(handle, :request, headers) do
+      body(handle, :request, request.body, content_type(request, headers), "request body")
     end
   end
 
   defp response(handle, %Response{} = response) do
     with {:ok, status} <- status(response.status),
          :ok <- native(Native.response_status(handle, status)),
-         :ok <- headers(handle, :response, response.headers) do
-      body(handle, :response, response.body, content_type(response), "response body")
+         {:ok, headers} <- canonical_headers(response.headers, "response header"),
+         :ok <- headers(handle, :response, headers) do
+      body(handle, :response, response.body, content_type(response, headers), "response body")
     end
   end
 
@@ -129,26 +137,54 @@ defmodule PactEx.Consumer.Apply do
 
   defp param_value(value, label), do: value(value, label)
 
-  # An explicit `:content_type` wins. Otherwise a binary body uses the
-  # Content-Type header, so the body and the header cannot disagree.
-  defp content_type(%{content_type: content_type}) when is_binary(content_type),
-    do: content_type
-
-  defp content_type(%{body: body, headers: headers}) when is_binary(body),
-    do: header_content_type(headers)
-
-  defp content_type(_part), do: nil
-
-  defp header_content_type(headers) do
-    Enum.find_value(headers, fn {name, values} ->
-      with {:ok, name} <- name(name, "header"),
-           "content-type" <- String.downcase(name),
-           [value | _] when is_binary(value) <- List.wrap(values) do
-        value
-      else
-        _ -> nil
+  # Turns header names into strings and writes any spelling of Content-Type
+  # as "Content-Type". Returns a list of `{name, values}`.
+  defp canonical_headers(headers, label) do
+    headers
+    |> Enum.reduce_while({:ok, []}, fn {name, values}, {:ok, acc} ->
+      case name(name, label) do
+        {:ok, name} -> {:cont, {:ok, [{canonical_name(name), values} | acc]}}
+        {:error, _} = error -> {:halt, error}
       end
     end)
+    |> case do
+      {:ok, acc} -> unique_content_type(Enum.reverse(acc), label)
+      error -> error
+    end
+  end
+
+  defp canonical_name(name) do
+    if String.downcase(name) == "content-type", do: "Content-Type", else: name
+  end
+
+  defp unique_content_type(headers, label) do
+    case Enum.count(headers, fn {name, _values} -> name == "Content-Type" end) do
+      count when count > 1 ->
+        {:error, invalid("#{label}s contain Content-Type more than once, with different case")}
+
+      _ ->
+        {:ok, headers}
+    end
+  end
+
+  # An explicit `:content_type` wins, then the Content-Type header. `nil`
+  # leaves the default of the body type.
+  defp content_type(%{content_type: content_type}, _headers) when is_binary(content_type),
+    do: content_type
+
+  defp content_type(_part, headers) do
+    Enum.find_value(headers, fn
+      {"Content-Type", values} -> header_content_type(values)
+      _other -> nil
+    end)
+  end
+
+  defp header_content_type(values) do
+    case List.wrap(values) do
+      [value | _] when is_binary(value) -> value
+      [%{"value" => value} | _] when is_binary(value) -> value
+      _ -> nil
+    end
   end
 
   defp body(_handle, _part, nil, _content_type, _label), do: :ok

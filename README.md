@@ -66,8 +66,10 @@ function with the `PactEx.MockServer` (use `mock.url`), and then:
 - **The server could not start or the pact could not be written.** It returns
   `{:error, %PactEx.Error{}}`.
 
-The mock server is always stopped. `run!/4` returns `:ok` or raises the error.
-Options are `:host` and `:port`.
+The mock server is stopped when your function returns, raises, throws or exits.
+A brutal kill of the calling process (an ExUnit timeout or a linked crash)
+skips the cleanup, and the server lives until the OS process exits. `run!/4`
+returns `:ok` or raises the error. Options are `:host` and `:port`.
 
 For more control, use `PactEx.Consumer.start_mock_server/3`, then
 `PactEx.MockServer.matched?/1`, `mismatches/1`, `write_pact/2` and `stop/1`.
@@ -76,15 +78,26 @@ For more control, use `PactEx.Consumer.start_mock_server/3`, then
 
 **Body encoding.** This applies to request and response bodies.
 
-| You pass | Sent as |
-|---|---|
-| A map or list | JSON, with content type `application/json` unless you pass `content_type:`. |
-| A UTF-8 string | Text, byte for byte. The content type is `content_type:` if you pass it, otherwise the interaction's `Content-Type` header, otherwise `text/plain`. |
-| A binary that is not valid UTF-8, or has NUL bytes | A binary body. The content type follows the same order, with `application/octet-stream` as the last default. |
+Each request and response has one content type. It is the `content_type:`
+option if you pass it, otherwise the `Content-Type` header, otherwise the
+default of the body type. This holds for every body type.
 
-The `Content-Type` header is used when its value is a string. If the value is a
-list, its first element is used if that is a string. Any other body type
-returns `{:error, %PactEx.Error{}}`.
+| You pass | Default content type | Sent as |
+|---|---|---|
+| A map or list | `application/json` | JSON. |
+| A UTF-8 string | `text/plain` | Text, byte for byte. |
+| A binary that is not valid UTF-8, or has NUL bytes | `application/octet-stream` | A binary body. |
+
+The `Content-Type` header name can be in any case. It is written as
+`Content-Type`, so the pact has one entry. Two headers that differ only in case
+return an error. The value can be a string, a matcher (its `"value"` is used)
+or a list (its first element is used). The header is sent as you wrote it, even
+when `content_type:` differs. Any other body type returns
+`{:error, %PactEx.Error{}}`.
+
+A map or list body with an XML or form content type is a description of the
+body in pact_ffi's format, not JSON. An XML description of the wrong shape makes
+pact_ffi panic, which aborts the VM. For raw XML, pass a string.
 
 ```elixir
 PactEx.HTTP.with_request(interaction, :post, "/notes",

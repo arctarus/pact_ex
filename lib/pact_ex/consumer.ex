@@ -24,10 +24,21 @@ defmodule PactEx.Consumer do
       floats or booleans, which become strings. A list gives a multi-valued
       parameter. `nil` and other types are rejected.
     * Query and header names are strings or atoms.
-    * A map or list body is sent as JSON (`application/json` by default). A
-      string body is sent as text (`text/plain` by default) when it is valid
-      UTF-8 without NUL bytes, and as binary (`application/octet-stream` by
-      default) otherwise. Set `:content_type` to override.
+    * Each request and response has one body content type. It is the
+      `:content_type` option if you pass it, otherwise the `Content-Type`
+      header, otherwise a default. The header name can be in any case and is
+      written as `Content-Type`. Its value can be a string, a matcher (its
+      `"value"` is used) or a list (its first element is used). Two headers
+      that differ only in case are an error. The header is sent as you wrote
+      it, even when `:content_type` differs.
+    * The default is `application/json` for a map or list, `text/plain` for a
+      string that is valid UTF-8 without NUL bytes, and
+      `application/octet-stream` for any other binary.
+    * A map or list body is sent as JSON, except with an XML or form content
+      type: then it is a description of the XML or form body, in the format of
+      pact_ffi. An XML description of the wrong shape makes pact_ffi panic,
+      which aborts the VM, so use a string body for raw XML.
+    * A string body is sent byte for byte. Any other body type is an error.
 
   The pact file is `<pact_dir>/<consumer>-<provider>.json`. It is merged with
   an existing file, so several runs can add interactions to the same pact.
@@ -42,8 +53,10 @@ defmodule PactEx.Consumer do
   everything matched.
 
   `fun` receives the `t:PactEx.MockServer.t/0`. Its return value is ignored.
-  The server is always stopped. If `fun` raises, throws or exits, nothing is
-  written and the exception propagates.
+  The server is stopped when `fun` returns, raises, throws or exits. If `fun`
+  raises, throws or exits, nothing is written and the exception propagates. A
+  brutal kill of the calling process (an ExUnit timeout or a linked crash)
+  skips the cleanup, and the server lives until the OS process exits.
 
   Takes the same options as `start_mock_server/3`.
 

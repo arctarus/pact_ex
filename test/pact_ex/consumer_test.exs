@@ -509,7 +509,7 @@ defmodule PactEx.ConsumerTest do
       assert body_of(dir, "response")["contentType"] == "text/plain"
     end
 
-    test "a matcher Content-Type header does not set the body content type", %{
+    test "a matcher Content-Type header gives the body content type through its value", %{
       pact: pact,
       tmp_dir: dir
     } do
@@ -518,13 +518,13 @@ defmodule PactEx.ConsumerTest do
         |> HTTP.with_request(:get, "/m2")
         |> HTTP.will_respond_with(200,
           headers: %{"Content-Type" => regex("application/json", "application/.+")},
-          body: "hi"
+          body: ~s({"a":1})
         )
 
       assert :ok =
                Consumer.run(pact, [i], fn m -> Req.get!(m.url <> "/m2", decode_body: false) end)
 
-      assert body_of(dir, "response")["contentType"] == "text/plain"
+      assert body_of(dir, "response")["contentType"] == "application/json"
     end
 
     test "map bodies default to application/json", %{pact: pact, tmp_dir: dir} do
@@ -654,6 +654,289 @@ defmodule PactEx.ConsumerTest do
 
       [written] = read_pact(dir)["interactions"]
       assert get_in(written, ["response", "matchingRules", "body", "$.items"])
+    end
+  end
+
+  describe "run/4 Content-Type handling" do
+    defp content_type_entries(headers) do
+      for {name, values} <- headers, String.downcase(name) == "content-type", do: {name, values}
+    end
+
+    # The JSON that pact_ffi turns into `<root><name>text</name></root>`. A
+    # description of any other shape makes pact_ffi panic, which aborts the VM.
+    defp xml_description(name, text) do
+      %{
+        "root" => %{
+          "name" => "root",
+          "children" => [%{"name" => name, "children" => [%{"content" => text}]}]
+        }
+      }
+    end
+
+    defp served_content_type(resp), do: Req.Response.get_header(resp, "content-type")
+
+    test "a lowercase header with a map body leaves one Content-Type, in the pact and on the wire",
+         %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("lowercase header, map body")
+        |> HTTP.with_request(:post, "/hal",
+          headers: %{"content-type" => "application/hal+json"},
+          body: %{"a" => 1}
+        )
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type" => "application/hal+json"},
+          body: %{"x" => like(1)}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.post!(m.url <> "/hal",
+                     body: ~s({"a":1}),
+                     headers: [{"content-type", "application/hal+json"}],
+                     decode_body: false,
+                     retry: false
+                   )
+
+                 assert resp.status == 200
+                 assert served_content_type(resp) == ["application/hal+json"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      for part <- ["request", "response"] do
+        assert [{"Content-Type", ["application/hal+json"]}] =
+                 content_type_entries(written[part]["headers"])
+
+        assert written[part]["body"]["contentType"] == "application/hal+json"
+      end
+
+      assert written["response"]["body"]["content"] == %{"x" => 1}
+    end
+
+    test "a lowercase header with a string body leaves one Content-Type", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      json = ~s({"a":1})
+
+      i =
+        HTTP.interaction("lowercase header, string body")
+        |> HTTP.with_request(:post, "/s",
+          headers: %{"content-type" => "application/json"},
+          body: json
+        )
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type" => "application/vnd.test+json"},
+          body: json
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.post!(m.url <> "/s",
+                     body: json,
+                     headers: [{"content-type", "application/json"}],
+                     decode_body: false,
+                     retry: false
+                   )
+
+                 assert served_content_type(resp) == ["application/vnd.test+json"]
+                 assert resp.body == json
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      assert [{"Content-Type", ["application/json"]}] =
+               content_type_entries(written["request"]["headers"])
+
+      assert [{"Content-Type", ["application/vnd.test+json"]}] =
+               content_type_entries(written["response"]["headers"])
+    end
+
+    test "an atom header name in any case is canonicalised too", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("atom header name")
+        |> HTTP.with_request(:get, "/a")
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type": "application/json"},
+          body: %{"a" => 1}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/a", decode_body: false, retry: false)
+                 assert served_content_type(resp) == ["application/json"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      assert [{"Content-Type", ["application/json"]}] =
+               content_type_entries(written["response"]["headers"])
+    end
+
+    test "a Content-Type header without a body is written under the canonical name", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("header only")
+        |> HTTP.with_request(:get, "/h")
+        |> HTTP.will_respond_with(204, headers: %{"content-type" => "text/csv"})
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m -> Req.get!(m.url <> "/h", decode_body: false) end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["response"]["headers"] == %{"Content-Type" => ["text/csv"]}
+    end
+
+    test "a list-valued header uses its first element for a map body", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("list header")
+        |> HTTP.with_request(:get, "/l")
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type" => ["application/hal+json", "extra"]},
+          body: %{"a" => 1}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 Req.get!(m.url <> "/l", decode_body: false, retry: false)
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["response"]["body"]["contentType"] == "application/hal+json"
+
+      assert [{"Content-Type", ["application/hal+json", "extra"]}] =
+               content_type_entries(written["response"]["headers"])
+    end
+
+    test "a non-UTF-8 body takes its content type from the header", %{pact: pact, tmp_dir: dir} do
+      payload = <<0, 255, 1, 128>>
+
+      i =
+        HTTP.interaction("binary with header")
+        |> HTTP.with_request(:get, "/b")
+        |> HTTP.will_respond_with(200, headers: %{"content-type" => "image/png"}, body: payload)
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/b", decode_body: false, retry: false)
+                 assert resp.body == payload
+                 assert served_content_type(resp) == ["image/png"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert %{"contentType" => "image/png", "encoded" => "base64"} = written["response"]["body"]
+
+      assert [{"Content-Type", ["image/png"]}] =
+               content_type_entries(written["response"]["headers"])
+    end
+
+    test "a matcher header gives the content type of a map body", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("matcher header, map body")
+        |> HTTP.with_request(:get, "/mm")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => regex("application/hal+json", "application/.*json")},
+          body: %{"a" => 1}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/mm", decode_body: false, retry: false)
+                 assert served_content_type(resp) == ["application/hal+json"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["response"]["body"]["contentType"] == "application/hal+json"
+      assert get_in(written, ["response", "matchingRules", "header", "Content-Type"])
+    end
+
+    test "a map body with an XML Content-Type is processed as an XML description", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("xml description")
+        |> HTTP.with_request(:post, "/xml",
+          headers: %{"Content-Type" => "application/xml"},
+          body: xml_description("a", "b")
+        )
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type" => "application/xml"},
+          body: xml_description("name", "Ann")
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.post!(m.url <> "/xml",
+                     body: ~s(<?xml version="1.0" encoding="UTF-8"?><root><a>b</a></root>),
+                     headers: [{"content-type", "application/xml"}],
+                     decode_body: false,
+                     retry: false
+                   )
+
+                 assert resp.status == 200
+                 assert served_content_type(resp) == ["application/xml"]
+                 assert resp.body =~ "<root><name>Ann</name></root>"
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      for part <- ["request", "response"] do
+        assert written[part]["body"]["contentType"] == "application/xml"
+        assert is_binary(written[part]["body"]["content"])
+        assert written[part]["body"]["content"] =~ "<root>"
+
+        assert [{"Content-Type", ["application/xml"]}] =
+                 content_type_entries(written[part]["headers"])
+      end
+    end
+
+    test "an explicit content_type sets the body type and keeps the header as given", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("explicit wins")
+        |> HTTP.with_request(:get, "/w")
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type" => "application/json"},
+          body: %{"a" => 1},
+          content_type: "application/hal+json"
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/w", decode_body: false, retry: false)
+                 assert served_content_type(resp) == ["application/json"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["response"]["body"]["contentType"] == "application/hal+json"
+
+      assert [{"Content-Type", ["application/json"]}] =
+               content_type_entries(written["response"]["headers"])
+    end
+
+    test "two Content-Type headers that differ only in case are rejected", %{pact: pact} do
+      i =
+        HTTP.interaction("duplicate content type")
+        |> HTTP.with_request(:get, "/d")
+        |> HTTP.will_respond_with(200,
+          headers: %{"content-type" => "text/plain", "Content-Type" => "text/csv"}
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "Content-Type"
     end
   end
 
