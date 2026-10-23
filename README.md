@@ -116,16 +116,32 @@ error: it is skipped, like any value pact_ffi cannot parse.)
 `application/x-www-form-urlencoded`, pact_ffi does not send a JSON body as it
 is. It reads it as a description of the body in its own format. This applies to
 a map or list, and also to a string that pact_ffi's content sniffing takes for
-JSON (text that starts like JSON: `{`, `[`, a digit, `true`, `false`, `null`,
-a quote). PactEx checks the description before it calls pact_ffi, because some
-shapes make pact_ffi panic, which would abort the VM. A bad description returns
-`{:error, %PactEx.Error{code: -101}}` that names the interaction and the path of
-the problem. A type that is both JSON and XML (`application/xml+json`) is JSON.
+JSON (see below). PactEx checks the description before it calls pact_ffi,
+because some shapes make pact_ffi panic, which would abort the VM. A bad
+description returns `{:error, %PactEx.Error{code: -101}}` that names the
+interaction and the path of the problem. A type that is both JSON and XML
+(`application/xml+json`) is JSON.
+
+pact_ffi sniffs a string by its first characters only, not by parsing it.
+After optional leading whitespace (Unicode whitespace counts; a BOM does not),
+the text must start with one of these:
+
+- `true`, `false` or `null`, or one or more ASCII digits (`-1` does not
+  count);
+- a `"` followed by any number of word characters (so a lone `"` counts);
+- `{` and optional whitespace, then `}` or a `"` and a word character (`{ }`,
+  `{"a`). `{"":1}` and `{"-a":1}` are not sniffed, because the first key is
+  empty or starts with a non-word character;
+- `[` and optional whitespace. Anything may follow.
+
+Word characters are Unicode letters, digits and `_`. Nothing after that
+prefix is looked at, so `1=a&2=b`, `null_flag=1` and `123 items` are sniffed as
+JSON.
 
 A string that is not sniffed as JSON (raw XML, `a=1&b=2`) is sent byte for byte.
 A string that is sniffed as JSON must be a JSON object that is a valid
 description. For XML, a description is turned into XML. A raw form string that
-starts like JSON, such as `1=a&2=b` or `null_flag=1`, returns an error, because
+is sniffed as JSON, such as `1=a&2=b` or `null_flag=1`, returns an error, because
 pact_ffi would panic on it.
 
 An XML description is a map with a `"root"` element. An element is
@@ -177,7 +193,9 @@ PactEx.HTTP.with_request(interaction, :get, "/animals",
 ```
 
 `query:` and `headers:` also take a keyword list or a list of `{name, value}`
-tuples, as Req and Plug do. A name that repeats gets all its values, in order:
+tuples, as Req and Plug do. Anything else (a string, a list that holds
+something other than a `{name, value}` tuple) raises `ArgumentError`. A name
+that repeats gets all its values, in order:
 
 ```elixir
 PactEx.HTTP.with_request(interaction, :get, "/animals",
@@ -196,8 +214,7 @@ An atom header name is written as Req writes it, in a map and in a list:
 underscores become dashes and ASCII letters lower case, so `x_request_id: "1"`
 is the header `x-request-id` and `content_type: "text/plain"` is
 `Content-Type`. A string name is used as it is (`"x_id"` stays `"x_id"`). Query
-names are not changed (`page_size: 2` is `page_size`). Anything else (a string, a list that holds
-something other than a `{name, value}` tuple) raises `ArgumentError`.
+names are not changed (`page_size: 2` is `page_size`).
 
 `nil` and other types return `{:error, %PactEx.Error{}}`. So does an empty list
 (`"tag" => []`), which would drop the parameter without a word. The error names

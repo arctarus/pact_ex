@@ -54,7 +54,11 @@ defmodule PactEx.Consumer do
       (`application/xml`, `text/xml`, or `application/` or `text/` with a
       `+xml` suffix) or `application/x-www-form-urlencoded`, pact_ffi reads
       JSON as a description of the body in its own format. That also applies to
-      a string body that pact_ffi's sniffing takes for JSON. pact_ffi panics on
+      a string body that pact_ffi's sniffing takes for JSON. The sniffing reads
+      only the first characters, after optional whitespace: `true`, `false`,
+      `null`, a digit, a quote, `[`, or `{` followed by `}` or by a quote and a
+      word character. The rest of the text is not looked at (`1=a&2=b` counts).
+      pact_ffi panics on
       some descriptions, which aborts the VM, so PactEx checks them first and
       returns `{:error, %PactEx.Error{code: -101}}` naming the interaction and
       the path of the problem. An XML description is `%{"root" => element}`,

@@ -36,18 +36,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 - [ ] Abort matrix: add an `:ok` case for a working mixed Content-Type list such as `[%{"value" => ["a"]}, "text/plain"]` (only unit-tested today).
 - [ ] Remove the duplicate out-of-range create test, and the stray path comment on line 1 of `test/pact_ex/native/mock_server_test.exs`.
 
-## Minor: docs
-
-- [ ] README ~199: rewrap the 97-char line and move "Anything else … raises ArgumentError" next to the `query:`/`headers:` shape sentence.
-- [ ] README: make the "sniffed as JSON" wording precise. pact_models' regex needs `{` followed by `}` or `"\w`, and allows leading Unicode whitespace.
-- [ ] The error message for valid JSON nested deeper than serde_json's limit of 128 says "not valid JSON". Mention the nesting limit.
-- [ ] The `regex/2` doc should justify `term()` values with non-string JSON body values.
-- [ ] RELEASING: the note on SHA pins should mention that `dtolnay/rust-toolchain` is pinned to a branch head.
-
-## Before the first release
-
-- [ ] `content_type.rs` ~68: the `debug!` cost only applies when a debug subscriber is installed.
-
 ## Before plan 2
 
 - [ ] Re-review plans 2 and 3 against the real plan 1 code.

@@ -58,10 +58,14 @@ defmodule PactEx.Matchers do
   @doc """
   Matches a string against the regular expression `pattern`.
 
-  `value` is the example string. It should match `pattern`.
+  `value` is the example value, usually a string. It should match `pattern`.
 
-  `value` is typed `term()` and not guarded, because regex rules also apply to
-  path and query values, and pact_ffi matches those on their string form.
+  `value` is typed `term()` and not guarded, because a regex rule also applies
+  to values that are not strings. In a JSON body, `pact_matching` matches the
+  pattern against the string form of a number or a boolean (the text it has in
+  JSON: `42`, `1.5`, `true`), so `regex(42, "\\d+")` is valid. The same goes for
+  `null`, a list or a map, which are matched as their JSON text. Path and
+  query values are matched as strings too.
 
       iex> PactEx.Matchers.regex("male", "(male|female)")
       %{"pact:matcher:type" => "regex", "value" => "male", "regex" => "(male|female)"}
