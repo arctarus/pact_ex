@@ -2333,6 +2333,7 @@ dependencies = [
  "pact_ffi",
  "pact_models",
  "rustler",
+ "serde_json",
 ]
 
 [[package]]

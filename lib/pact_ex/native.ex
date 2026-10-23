@@ -54,6 +54,8 @@ defmodule PactEx.Native do
   def mock_server_mismatches(_port), do: :erlang.nif_error(:nif_not_loaded)
 
   def content_type_kind(_content_type), do: :erlang.nif_error(:nif_not_loaded)
+  def detect_json(_text), do: :erlang.nif_error(:nif_not_loaded)
+  def json_text_shape(_text), do: :erlang.nif_error(:nif_not_loaded)
 
   def init_logger(_sink, _level), do: :erlang.nif_error(:nif_not_loaded)
 

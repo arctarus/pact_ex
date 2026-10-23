@@ -38,5 +38,58 @@ defmodule PactEx.NativeTest do
     end
   end
 
+  describe "detect_json/1" do
+    test "follows pact_models' sniffing of the text" do
+      for text <- [~s({"a":1}), "[1]", "123 items", "1=a&2=b", "null_flag=1", "true", ""] do
+        assert PactEx.Native.detect_json(text) == (text != ""), inspect(text)
+      end
+
+      for text <- ["<a/>", ~s(<?xml version="1.0"?><a/>), "a=1", ~s({"-a":1}), ~s({"":1})] do
+        refute PactEx.Native.detect_json(text), inspect(text)
+      end
+    end
+
+    test "a NUL byte is just text" do
+      refute PactEx.Native.detect_json("a\0b")
+      assert PactEx.Native.detect_json("{\"a\":\"x\0\"}")
+    end
+
+    test "raises ArgumentError for anything that is not a UTF-8 string" do
+      for bad <- [nil, :json, 1, ~c"{}", <<255, 254>>] do
+        assert_raise ArgumentError, fn -> PactEx.Native.detect_json(bad_arg(bad)) end
+      end
+    end
+  end
+
+  describe "json_text_shape/1" do
+    test "returns the object as serde_json renders it" do
+      assert {:object, rendered} = PactEx.Native.json_text_shape(~s({"a":1,"a":2}))
+      assert JSON.decode!(rendered) == %{"a" => 2}
+
+      assert {:object, "{\"a\":-0.0,\"b\":2.0,\"c\":1.8446744073709552e+19}"} =
+               PactEx.Native.json_text_shape(~s({"a":-0,"b":2e0,"c":18446744073709551616}))
+    end
+
+    test "returns :other for JSON that is not an object" do
+      for text <- ["[1]", "123", ~s("x"), "null", "true"] do
+        assert PactEx.Native.json_text_shape(text) == :other, text
+      end
+    end
+
+    test "returns :invalid for text serde_json cannot parse, including NUL and deep nesting" do
+      deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
+
+      for text <- ["", "1=a&2=b", "{", ~s({"a":1} x), "a\0b", ~s({"a":#{deep}})] do
+        assert PactEx.Native.json_text_shape(text) == :invalid, inspect(text)
+      end
+    end
+
+    test "raises ArgumentError for anything that is not a UTF-8 string" do
+      for bad <- [nil, :json, 1, ~c"{}", <<255, 254>>] do
+        assert_raise ArgumentError, fn -> PactEx.Native.json_text_shape(bad_arg(bad)) end
+      end
+    end
+  end
+
   defp bad_arg(value), do: Function.identity(value)
 end
