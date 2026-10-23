@@ -46,14 +46,36 @@ the same 12 files, runs the same checks and keeps the tarballs as workflow
 artifacts for 7 days. The version in their names is `@version` from `mix.exs`.
 A dry run starts:
 
-- on a pull request that touches `native/**`, `mix.exs` or
-  `.github/workflows/release.yml`;
+- on a pull request that touches `native/**`, `mix.exs`, `lib/pact_ex/native.ex`
+  or `.github/workflows/release.yml`;
 - by hand: Actions, "Release precompiled NIFs", "Run workflow", on any branch
   (the workflow file must exist on the default branch for the button to show).
 
 Run one before the first release, and after any change to the pipeline. The
-`publish` job is skipped. To test the release itself, tag a throwaway version
-on a fork.
+`publish` job is skipped: it needs a `v*` tag push. To test the release itself,
+tag a throwaway version on a fork.
+
+A dry run does not check the tag against `@version`, because there is no tag.
+It names the files after `@version`. So a dry run cannot catch a tag that does
+not match: only the tag push fails on that, before it builds anything.
+
+A new push to a branch or pull request cancels the dry run that is still going
+for it. A tag push is never cancelled.
+
+## If a build job fails on a tag push
+
+`fail-fast` is off, so the other build jobs finish, and `publish` does not run.
+Nothing is released. Fix the cause, then:
+
+- for a flaky failure (a runner or network error), open the run in Actions and
+  choose "Re-run failed jobs". The jobs that passed keep their artifacts, and
+  once every build job has passed, `publish` runs and uploads all 12 files;
+- for a real failure, fix it on `main`, delete the tag locally and on the
+  remote, and tag the new commit with the same version. Do this only if nothing
+  was published. A re-run uses the commit the tag pointed to when it was pushed,
+  so it cannot pick up a fix.
+
+Check the GitHub release before publishing to Hex: it must list all 12 files.
 
 ## Check the glibc floor
 
@@ -61,7 +83,10 @@ The two `*-unknown-linux-gnu` jobs print the highest `GLIBC_x.y` symbol version
 that the NIF needs (`readelf -W --dyn-syms`), and add it to the run summary.
 The x86_64 job fails when it is above `GLIBC_2.35`, the glibc of the
 `ubuntu-22.04` runner. The aarch64 job is built in a cross image, so it only
-reports. The first dry run (2026-10-23) measured `GLIBC_2.34` for x86_64 and
+reports. A failure of `readelf` itself fails the step; only a library with no
+`GLIBC_` symbol at all is accepted (it prints `none`). The x86_64 limit is a
+guard: it cannot trip on `ubuntu-22.04` today, because that runner has the
+limit's own glibc. The first dry run (2026-10-23) measured `GLIBC_2.34` for x86_64 and
 `GLIBC_2.18` for aarch64, as the README states. If a run reports different
 values, update the README and the note below.
 

@@ -4,8 +4,8 @@ name: Release precompiled NIFs
 # release. Every other trigger is a dry run: it builds the same files and
 # keeps them as workflow artifacts, but checks no tag and publishes nothing.
 #
-#   * pull_request: only when the PR touches native code or the release
-#     pipeline;
+#   * pull_request: only when the PR touches native code, the NIF loader
+#     (`lib/pact_ex/native.ex`), `mix.exs` or the release pipeline;
 #   * workflow_dispatch: a manual dry run, from the Actions tab.
 on:
   push:
@@ -16,10 +16,17 @@ on:
       - "native/**"
       - ".github/workflows/release.yml"
       - "mix.exs"
+      - "lib/pact_ex/native.ex"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A new push to a branch or pull request cancels the dry run still going for
+# it. A tag push is never cancelled: a release must run to the end.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
@@ -88,7 +95,7 @@ jobs:
             exit 1
           fi
           case "$entries" in
-            libpact_ex_nif-v${PROJECT_VERSION}-nif-${{ matrix.nif }}-${{ matrix.job.target }}.so) ;;
+            "libpact_ex_nif-v${PROJECT_VERSION}-nif-${{ matrix.nif }}-${{ matrix.job.target }}.so") ;;
             *)
               echo "::error::Unexpected tarball entry: $entries"
               exit 1
@@ -111,7 +118,10 @@ jobs:
           dir=$(mktemp -d)
           tar -xzf "$TARBALL" -C "$dir"
           so=$(echo "$dir"/*.so)
-          max=$(readelf -W --dyn-syms "$so" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n1 || true)
+          # readelf runs on its own, so a failure of it fails the step. Only
+          # grep finding no GLIBC symbol at all is accepted.
+          syms=$(readelf -W --dyn-syms "$so")
+          max=$({ printf '%s\n' "$syms" | grep -o 'GLIBC_[0-9.]*' || true; } | sort -Vu | tail -n1)
           echo "Maximum required glibc symbol version for $TARGET: ${max:-none}"
           echo "$TARGET (NIF ${{ matrix.nif }}): ${max:-none}" >> "$GITHUB_STEP_SUMMARY"
           case "$TARGET" in
@@ -138,7 +148,7 @@ jobs:
   publish:
     name: Publish the GitHub release
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -152,7 +162,7 @@ jobs:
         shell: bash
         run: |
           ls -l dist
-          if [ "$(ls dist | wc -l | tr -d ' ')" != "12" ]; then
+          if [ "$(find dist -type f | wc -l | tr -d ' ')" != "12" ]; then
             echo "::error::Expected 12 tarballs (6 targets, 2 NIF versions)"
             exit 1
           fi
