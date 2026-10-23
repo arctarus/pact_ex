@@ -1,0 +1,183 @@
+defmodule PactEx.MockServerTest do
+  use ExUnit.Case, async: true
+
+  alias PactEx.{Consumer, HTTP, MockServer}
+
+  @moduletag :tmp_dir
+
+  # Cleanup kills whatever server is registered on a port, and the OS can hand
+  # a freed port to a concurrent test. So a test owns its port until it stops
+  # the server, and `on_exit` only stops servers the test still owns. Tests
+  # that stop the server themselves are tagged `:stops`.
+  setup %{tmp_dir: dir} = context do
+    pact = PactEx.new("mock-consumer", "mock-provider", pact_dir: dir)
+
+    i =
+      HTTP.interaction("ping")
+      |> HTTP.with_request(:get, "/ping")
+      |> HTTP.will_respond_with(200, body: "pong")
+
+    {:ok, mock} = Consumer.start_mock_server(pact, [i])
+    unless context[:stops], do: on_exit(fn -> MockServer.stop(mock) end)
+    %{mock: mock, pact_file: Path.join(dir, "mock-consumer-mock-provider.json")}
+  end
+
+  defp bad(value), do: Function.identity(value)
+
+  describe "build_url/2" do
+    test "joins IPv4 hosts and names without brackets" do
+      assert MockServer.build_url("127.0.0.1", 1234) == "http://127.0.0.1:1234"
+      assert MockServer.build_url("localhost", 80) == "http://localhost:80"
+    end
+
+    test "brackets IPv6 hosts" do
+      assert MockServer.build_url("::1", 1234) == "http://[::1]:1234"
+      assert MockServer.build_url("fe80::1", 8080) == "http://[fe80::1]:8080"
+    end
+
+    test "does not bracket an already bracketed host" do
+      assert MockServer.build_url("[::1]", 1234) == "http://[::1]:1234"
+    end
+  end
+
+  test "matched?/1 and mismatches/1 follow the traffic", %{mock: mock} do
+    refute MockServer.matched?(mock)
+
+    assert [%{"type" => "missing-request", "method" => "GET", "path" => "/ping"}] =
+             MockServer.mismatches(mock)
+
+    assert %{body: "pong"} = Req.get!(mock.url <> "/ping")
+    assert MockServer.matched?(mock)
+    assert MockServer.mismatches(mock) == []
+
+    Req.get!(mock.url <> "/other", retry: false)
+    refute MockServer.matched?(mock)
+    assert Enum.any?(MockServer.mismatches(mock), &(&1["type"] == "request-not-found"))
+  end
+
+  test "write_pact/2 writes the pact file", %{mock: mock, pact_file: file} do
+    Req.get!(mock.url <> "/ping")
+    assert :ok = MockServer.write_pact(mock)
+
+    assert [%{"description" => "ping"}] =
+             file |> File.read!() |> JSON.decode!() |> Map.fetch!("interactions")
+  end
+
+  test "write_pact/2 merges with an existing file by default", %{
+    mock: mock,
+    pact_file: file,
+    tmp_dir: dir
+  } do
+    File.write!(
+      file,
+      JSON.encode!(%{
+        "consumer" => %{"name" => "mock-consumer"},
+        "provider" => %{"name" => "mock-provider"},
+        "interactions" => [
+          %{
+            "type" => "Synchronous/HTTP",
+            "description" => "older",
+            "request" => %{"method" => "GET", "path" => "/older"},
+            "response" => %{"status" => 200}
+          }
+        ],
+        "metadata" => %{"pactSpecification" => %{"version" => "4.0"}}
+      })
+    )
+
+    Req.get!(mock.url <> "/ping")
+    assert :ok = MockServer.write_pact(mock)
+
+    descriptions =
+      dir
+      |> Path.join("mock-consumer-mock-provider.json")
+      |> File.read!()
+      |> JSON.decode!()
+      |> Map.fetch!("interactions")
+      |> Enum.map(& &1["description"])
+      |> Enum.sort()
+
+    assert descriptions == ["older", "ping"]
+  end
+
+  test "write_pact/2 with overwrite: true replaces an existing file", %{
+    mock: mock,
+    pact_file: file
+  } do
+    File.write!(
+      file,
+      JSON.encode!(%{
+        "consumer" => %{"name" => "mock-consumer"},
+        "provider" => %{"name" => "mock-provider"},
+        "interactions" => [
+          %{
+            "type" => "Synchronous/HTTP",
+            "description" => "older",
+            "request" => %{"method" => "GET", "path" => "/older"},
+            "response" => %{"status" => 200}
+          }
+        ],
+        "metadata" => %{"pactSpecification" => %{"version" => "4.0"}}
+      })
+    )
+
+    Req.get!(mock.url <> "/ping")
+    assert :ok = MockServer.write_pact(mock, overwrite: true)
+
+    assert ["ping"] ==
+             file
+             |> File.read!()
+             |> JSON.decode!()
+             |> Map.fetch!("interactions")
+             |> Enum.map(& &1["description"])
+  end
+
+  test "write_pact/2 rejects unknown options", %{mock: mock} do
+    assert_raise ArgumentError, fn -> MockServer.write_pact(mock, bad(overwritee: true)) end
+  end
+
+  test "write_pact/2 rejects a non-boolean overwrite", %{mock: mock} do
+    assert_raise ArgumentError, ~r/overwrite/, fn ->
+      MockServer.write_pact(mock, bad(overwrite: "yes"))
+    end
+  end
+
+  test "write_pact/2 returns a PactEx.Error when the directory cannot be created", %{
+    mock: mock,
+    tmp_dir: dir
+  } do
+    blocker = Path.join(dir, "blocker")
+    File.write!(blocker, "x")
+
+    assert {:error, %PactEx.Error{function: "pactffi_write_pact_file", code: 2, message: message}} =
+             MockServer.write_pact(%{mock | pact_dir: blocker})
+
+    assert message =~ "could not write the pact file"
+  end
+
+  @tag :stops
+  test "stop/1 shuts the server down", %{mock: mock} do
+    assert :ok = MockServer.stop(mock)
+    # Read-only probe: a cleanup could kill a concurrent test's server on a reused port.
+    assert PactEx.Native.mock_server_mismatches(mock.port) == nil
+    assert {:error, _} = Req.get(mock.url <> "/ping", retry: false)
+  end
+
+  test "stop/1 on a port that is not served returns :ok and leaves other servers alone", %{
+    mock: mock
+  } do
+    # Port 1 is never served, so this cleanup cannot hit a concurrent test's server.
+    assert :ok = MockServer.stop(%{mock | port: 1})
+    assert %{status: 200} = Req.get!(mock.url <> "/ping", retry: false)
+  end
+
+  @tag :stops
+  test "after stop/1, queries return neutral values and write_pact/2 returns an error", %{
+    mock: mock
+  } do
+    :ok = MockServer.stop(mock)
+    refute MockServer.matched?(mock)
+    assert MockServer.mismatches(mock) == []
+    assert {:error, %PactEx.Error{code: 3}} = MockServer.write_pact(mock)
+  end
+end
