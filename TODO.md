@@ -10,6 +10,8 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: code
 
+- [ ] Decide on a literal `""` element in a Content-Type list (e.g. `["", "text/plain"]`): it is accepted today but pact_ffi stores it like the rejected empty-element case.
+- [ ] Content-Type empty-element wording: update the module summary in `apply.ex` (~30-32) to cover the any-position rule; the "no client can match" rationale only fits the request side (response side: a provider can't produce it) in `apply.ex`, the error message, README and `consumer.ex`; reword "has its value that resolves…" and pin that non-list branch in a test.
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
 - [ ] Wrap `mock_server_matched` / `mock_server_mismatches` in `on_large_stack`. Plan 2 needs this, because plugin mock servers run gRPC `block_on` under `MANAGER`.
 - [ ] Each `mock_server_mismatches` call leaks a CString into pact_ffi until cleanup. Document it, or avoid polling.
@@ -37,6 +39,7 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 - [ ] The Rust logger test leaks pact handles and duplicates `fail_given_with_params`.
 - [ ] The stack test aborts the test binary on regression instead of failing cleanly. `RUST_MIN_STACK` ≥ 4 MiB would hide a regression.
 - [ ] Test-support modules (`PactFile`, `AnimalClient`) are in the global namespace. `consumer_test.exs` keeps its own `read_pact`.
+- [ ] Abort matrix: add an `:ok` case for a working mixed Content-Type list such as `[%{"value" => ["a"]}, "text/plain"]` (only unit-tested today).
 - [ ] Remove the duplicate out-of-range create test, and the stray path comment on line 1 of `test/pact_ex/native/mock_server_test.exs`.
 
 ## Minor: docs
