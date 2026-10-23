@@ -1325,6 +1325,167 @@ defmodule PactEx.ConsumerTest do
                end)
     end
 
+    test "keys that collide once turned into strings are rejected, for every content type", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      # JSON.encode! writes both keys. Elixir's decoder keeps the first and
+      # serde_json (pact_ffi) the last, so the validator and pact_ffi would
+      # read different bodies. With an XML type the second one aborted the VM.
+      collide = %{:root => %{"name" => "ok"}, "root" => %{"a" => "b"}}
+
+      cases = [
+        {"xml header", [headers: %{"Content-Type" => "application/xml"}], collide, "$"},
+        {"xml explicit", [content_type: "text/xml"], collide, "$"},
+        {"json default", [], %{"a" => 1, :a => 2}, "$"},
+        {"form", [content_type: "application/x-www-form-urlencoded"], %{"a" => 1, :a => 2}, "$"},
+        {"nested in a list", [], %{"items" => [%{"ok" => 1}, %{:id => 1, "id" => 2}]},
+         "$.items[1]"},
+        {"integer key", [], %{1 => "a", "1" => "b"}, "$"}
+      ]
+
+      for {name, opts, body, path} <- cases, part <- [:request, :response] do
+        i =
+          case part do
+            :request ->
+              HTTP.interaction("collide #{name}")
+              |> HTTP.with_request(:post, "/c", [body: body] ++ opts)
+
+            :response ->
+              HTTP.interaction("collide #{name}")
+              |> HTTP.with_request(:get, "/c")
+              |> HTTP.will_respond_with(200, [body: body] ++ opts)
+          end
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i])
+
+        assert message =~ "#{part} body"
+        assert message =~ ~s("collide #{name}")
+        assert message =~ "#{path}: the key"
+      end
+
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "keys that differ in type but not in value are fine when they do not collide", %{
+      pact: pact
+    } do
+      i =
+        HTTP.interaction("atoms")
+        |> HTTP.with_request(:get, "/atoms")
+        |> HTTP.will_respond_with(200, body: %{ok: true, other: %{"nested" => [%{a: 1}]}})
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/atoms", retry: false)
+                 assert resp.body == %{"ok" => true, "other" => %{"nested" => [%{"a" => 1}]}}
+               end)
+    end
+
+    test "a content type pact_ffi cannot parse falls back to the XML header, so the map is checked",
+         %{pact: pact} do
+      for ct <- ["application/json; charset", "application/json,", "application/xml "] do
+        i =
+          xml_interaction([],
+            headers: %{"Content-Type" => "application/xml"},
+            content_type: ct,
+            body: @xml_panic_shape
+          )
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i]),
+               ct
+
+        assert message =~ "$.root"
+      end
+    end
+
+    test "a valid description with an unparseable explicit type is served as XML by the header",
+         %{pact: pact, tmp_dir: dir} do
+      i =
+        xml_interaction([],
+          headers: %{"Content-Type" => "application/xml"},
+          content_type: "application/json; charset",
+          body: xml_description("a", "b")
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.post!(m.url <> "/xml", decode_body: false, retry: false)
+                 assert resp.body =~ "<root><a>b</a></root>"
+               end)
+
+      assert body_of(dir, "response")["contentType"] == "application/xml"
+    end
+
+    test "a malformed XML header that pact_ffi ignores does not make the map an XML description",
+         %{pact: pact} do
+      for header <- ["application/xml; charset", "application/xml,"] do
+        i =
+          HTTP.interaction("malformed #{header}")
+          |> HTTP.with_request(:get, "/mal")
+          |> HTTP.will_respond_with(200,
+            headers: %{"Content-Type" => header},
+            body: @xml_panic_shape
+          )
+
+        assert :ok =
+                 Consumer.run(pact, [i], fn m ->
+                   resp = Req.get!(m.url <> "/mal", decode_body: false, retry: false)
+                   assert JSON.decode!(resp.body) == @xml_panic_shape
+                 end),
+               header
+      end
+    end
+
+    test "a type that is both JSON and XML is JSON, as in pact_ffi", %{pact: pact} do
+      i =
+        HTTP.interaction("json and xml")
+        |> HTTP.with_request(:get, "/jx")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => "application/xml+json"},
+          body: @xml_panic_shape
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/jx", decode_body: false, retry: false)
+                 assert JSON.decode!(resp.body) == @xml_panic_shape
+               end)
+    end
+
+    test "an arrayContains matcher in a form body is served from its variants", %{pact: pact} do
+      i =
+        HTTP.interaction("form array contains")
+        |> HTTP.with_request(:get, "/fa")
+        |> HTTP.will_respond_with(200,
+          content_type: "application/x-www-form-urlencoded",
+          body: %{"tag" => %{"pact:matcher:type" => "arrayContains", "variants" => ["a", "b"]}}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/fa", decode_body: false, retry: false)
+                 assert resp.body == "tag=a&tag=b"
+               end)
+    end
+
+    test "a form key that starts with pact: is rejected", %{pact: pact} do
+      i =
+        HTTP.interaction("form pact key")
+        |> HTTP.with_request(:get, "/fp")
+        |> HTTP.will_respond_with(200,
+          content_type: "application/x-www-form-urlencoded",
+          body: %{"pact:x" => "1", "a" => "b"}
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "$.pact:x"
+    end
+
     test "a raw XML string is still sent byte for byte",
          %{pact: pact, tmp_dir: dir} do
       xml = ~s(<root><a>b</a></root>)

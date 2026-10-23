@@ -1,6 +1,7 @@
 use std::ffi::CStr;
 
 mod args;
+mod content_type;
 mod error;
 mod handles;
 mod http;

@@ -45,9 +45,17 @@ defmodule PactEx.Consumer do
       element is `%{"name" => ..., "attributes" => ..., "children" => [...]}`,
       a text node is `%{"content" => ...}`, and a matcher element is
       `%{"pact:matcher:type" => ..., "value" => element}`. A form description
-      is a map of strings, numbers and lists of them (nested maps, booleans and
-      `nil` are errors, because pact_ffi would drop them). Use a string body
+      is a map of strings, numbers, matchers with such a value and lists of them
+      (nested maps, booleans, `nil` and keys that start with `"pact:"` are
+      errors, because pact_ffi would drop them). Use a string body
       for raw XML or a raw form.
+    * A map whose keys collide once turned into strings (`%{a: 1, "a" => 2}`)
+      is an error at any depth, for every content type. JSON would hold both
+      keys and readers disagree on which one wins.
+    * Which content type pact_ffi uses is decided the way pact_ffi does it:
+      the one passed with the body if pact_ffi can parse it, otherwise the
+      `Content-Type` header if that parses, and a type that is both JSON and
+      XML is JSON.
     * A string body is sent byte for byte. Any other body type is an error.
 
   The pact file is `<pact_dir>/<consumer>-<provider>.json`. It is merged with

@@ -57,6 +57,30 @@ defmodule PactEx.Consumer.BodyCheckTest do
       assert BodyCheck.kind("nonsense", nil) == :other
     end
 
+    test "JSON wins over XML when a type is both, as in process_body" do
+      assert BodyCheck.kind("application/xml+json", nil) == :other
+      assert BodyCheck.kind("application/json+xml", nil) == :other
+    end
+
+    test "a chosen type that mime cannot parse falls back to the header, as pact_ffi does" do
+      for chosen <- [
+            "application/json; charset",
+            "application/json,",
+            "application/xml\0",
+            <<255, 254>>
+          ] do
+        assert BodyCheck.kind(chosen, "application/xml") == :xml, inspect(chosen)
+        assert BodyCheck.kind(chosen, "application/x-www-form-urlencoded") == :form
+        assert BodyCheck.kind(chosen, "application/json") == :other
+      end
+    end
+
+    test "a malformed XML type that pact_ffi ignores is not XML" do
+      assert BodyCheck.kind("application/xml; charset", "application/xml; charset") == :other
+      assert BodyCheck.kind("application/xml; charset", nil) == :other
+      assert BodyCheck.kind("application/xml; charset", "application/json") == :other
+    end
+
     test "a type that parses wins over the header" do
       assert BodyCheck.kind("application/json", "application/xml") == :other
       assert BodyCheck.kind("application/xml", "application/json") == :xml
@@ -335,6 +359,48 @@ defmodule PactEx.Consumer.BodyCheckTest do
                })
     end
 
+    test "accepts arrayContains, which takes its values from \"variants\"" do
+      assert :ok =
+               form(%{
+                 "a" => %{
+                   "pact:matcher:type" => "arrayContains",
+                   "variants" => ["x", 1, %{"pact:matcher:type" => "type", "value" => "y"}]
+                 },
+                 "b" => %{"pact:matcher:type" => "array-contains", "variants" => []}
+               })
+    end
+
+    test "rejects arrayContains without a list of variants, or with variants pact_ffi drops" do
+      assert_invalid(form(%{"a" => %{"pact:matcher:type" => "arrayContains"}}), "$.a")
+
+      assert_invalid(
+        form(%{"a" => %{"pact:matcher:type" => "arrayContains", "variants" => "x"}}),
+        "$.a"
+      )
+
+      assert_invalid(
+        form(%{
+          "a" => %{"pact:matcher:type" => "arrayContains", "variants" => ["x", %{"k" => 1}]}
+        }),
+        "$.a[1]"
+      )
+
+      # "value" is not read for this matcher
+      assert_invalid(
+        form(%{"a" => %{"pact:matcher:type" => "arrayContains", "value" => ["x"]}}),
+        "$.a"
+      )
+    end
+
+    test "rejects top-level keys that start with pact:, which pact_ffi drops" do
+      assert_invalid(form(%{"pact:generator:type" => "x", "a" => "b"}), "pact:generator:type")
+      assert_invalid(form(%{"pact:other" => "x"}), "pact:")
+    end
+
+    test "accepts keys that merely contain pact:" do
+      assert :ok = form(%{"my-pact:key" => "x", "pact" => "y"})
+    end
+
     test "rejects a top-level list" do
       assert_invalid(form([%{"a" => "b"}]), "map")
     end
@@ -364,6 +430,42 @@ defmodule PactEx.Consumer.BodyCheckTest do
         form(%{"m" => %{"pact:matcher:type" => "type", "value" => %{"k" => "v"}}}),
         "$.m"
       )
+    end
+  end
+
+  describe "key_collision/1" do
+    test "accepts maps and lists without colliding keys" do
+      assert :ok = BodyCheck.key_collision(%{:a => 1, "b" => 2, 3 => [%{x: 1, y: 2}]})
+      assert :ok = BodyCheck.key_collision([%{a: 1}, %{"a" => 1}])
+      assert :ok = BodyCheck.key_collision(%{})
+      assert :ok = BodyCheck.key_collision("scalar")
+    end
+
+    test "rejects an atom and a string key that match" do
+      assert_invalid(BodyCheck.key_collision(%{:root => 1, "root" => 2}), ~s|$: the key "root"|)
+    end
+
+    test "rejects other keys that become the same string" do
+      assert_invalid(BodyCheck.key_collision(%{1 => :a, "1" => :b}), ~s|"1"|)
+      assert_invalid(BodyCheck.key_collision(%{nil => 1, "nil" => 2}), ~s|"nil"|)
+      assert_invalid(BodyCheck.key_collision(%{true => 1, "true" => 3}), "2 times")
+    end
+
+    test "reports the path, through maps and lists" do
+      assert_invalid(
+        BodyCheck.key_collision(%{"a" => %{"b" => [1, %{:c => 1, "c" => 2}]}}),
+        "$.a.b[1]"
+      )
+
+      assert_invalid(BodyCheck.key_collision([%{}, %{:a => 1, "a" => 2}]), "$[1]")
+    end
+
+    test "does not look inside structs" do
+      assert :ok = BodyCheck.key_collision(%{"d" => ~D[2026-10-23]})
+    end
+
+    test "keys that cannot be encoded are left to the encoder" do
+      assert :ok = BodyCheck.key_collision(%{{1} => 1, {2} => 2})
     end
   end
 

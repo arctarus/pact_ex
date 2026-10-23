@@ -18,42 +18,114 @@ defmodule PactEx.Consumer.BodyCheck do
   @matcher_key "pact:matcher:type"
   @max_u64 18_446_744_073_709_551_615
 
+  alias PactEx.Native
+
   @doc """
   Says how pact_ffi treats a map or list body: `:xml` (description of an XML
-  document), `:form` (description of a form body), or `:other` (JSON).
+  document), `:form` (description of a form body), or `:other` (JSON or raw).
 
-  `chosen` is the content type passed to `with_body`. When pact_ffi cannot
-  parse it, it falls back to the `Content-Type` header, so `header` is used
-  then.
+  This follows the real selection in `pactffi_with_body` and `process_body`
+  (pact_ffi 0.5.12, `handles.rs`), with the parsing and the type checks done
+  by pact_models through `PactEx.Native.content_type_kind/1`:
+
+    1. `chosen` is the content type passed to `with_body`. If pact_ffi parses
+       it, it is used. This holds even when the header says otherwise.
+    2. If `chosen` does not parse, pact_ffi ignores it and uses the hint: the
+       first value of the part's `Content-Type` header, if that parses
+       (`calc_content_type` in pact_models, `.ok()` on the parse).
+    3. If neither parses, pact_ffi detects the type from the body. A JSON
+       body (always the case here) is neither XML nor form.
+    4. With a parsed type, the branches are tried in this order: JSON, XML,
+       form. So `application/xml+json` is JSON.
+
+  `header` is the first `Content-Type` header value, or `nil`.
   """
   @spec kind(String.t() | nil, String.t() | nil) :: :xml | :form | :other
   def kind(chosen, header) do
-    case parse(chosen) || parse(header) do
-      {"application", "x-www-form-urlencoded", _suffix} -> :form
-      {main, sub, suffix} when main in ["application", "text"] and "xml" in [sub, suffix] -> :xml
-      _ -> :other
+    case classify(chosen) do
+      :invalid -> header |> classify() |> to_kind()
+      parsed -> to_kind(parsed)
     end
   end
 
-  # pact_models `ContentType::is_xml/1`: type is application or text, and the
-  # subtype (before the last "+") or the suffix (after it) is "xml". The
-  # parameters are ignored. The `mime` crate rejects whitespace around the
-  # type, and so does this.
-  defp parse(nil), do: nil
+  defp to_kind(kind) when kind in [:xml, :form], do: kind
+  defp to_kind(_json_other_or_invalid), do: :other
 
-  defp parse(content_type) do
-    [essence | _params] = String.split(content_type, ";", parts: 2)
+  # A string that is not UTF-8 cannot reach the NIF. pact_ffi could not read it
+  # either (`convert_cstr` fails), so it is as good as invalid.
+  defp classify(content_type) when is_binary(content_type) do
+    if String.valid?(content_type), do: Native.content_type_kind(content_type), else: :invalid
+  end
 
-    with [_, main, sub] <- Regex.run(~r{\A([^\s/;]+)/([^\s/;]+)\z}, essence) do
-      {main, sub} = {String.downcase(main), String.downcase(sub)}
+  defp classify(_nil), do: :invalid
 
-      case Regex.run(~r{\A(.+)\+([^+]*)\z}, sub) do
-        [_, sub, suffix] -> {main, sub, suffix}
-        nil -> {main, sub, nil}
-      end
-    else
-      _ -> nil
+  @doc """
+  Looks for two map keys that become the same JSON key, at any depth, in maps
+  and lists.
+
+  `JSON.encode!/1` writes both (`%{:a => 1, "a" => 2}` gives `{"a":1,"a":2}`).
+  Elixir's decoder keeps the first, serde_json in pact_ffi keeps the last, so
+  the two would read different bodies. Returns `{:error, reason}` with the path
+  of the map.
+  """
+  @spec key_collision(term()) :: :ok | {:error, String.t()}
+  def key_collision(term), do: collision(term, "$")
+
+  defp collision(map, path) when is_map(map) and not is_struct(map) do
+    keyed = for {key, value} <- map, do: {key_string(key), value}
+
+    with :ok <- duplicate(keyed, path) do
+      keyed
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.find_value(:ok, fn {key, value} ->
+        case collision(value, path <> "." <> key_label(key)) do
+          :ok -> nil
+          error -> error
+        end
+      end)
     end
+  end
+
+  defp collision(list, path) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.find_value(:ok, fn {item, index} ->
+      case collision(item, "#{path}[#{index}]") do
+        :ok -> nil
+        error -> error
+      end
+    end)
+  end
+
+  defp collision(_scalar, _path), do: :ok
+
+  defp key_label(key) when is_binary(key), do: key
+  defp key_label(key), do: inspect(key)
+
+  defp duplicate(keyed, path) do
+    keyed
+    |> Enum.frequencies_by(&elem(&1, 0))
+    |> Enum.sort()
+    |> Enum.find_value(:ok, fn
+      {key, count} when count > 1 and is_binary(key) ->
+        {:error,
+         "#{path}: the key #{inspect(key)} appears #{count} times once converted to a " <>
+           "string (for example as an atom and as a string), and JSON readers disagree " <>
+           "on which one wins"}
+
+      _other ->
+        nil
+    end)
+  end
+
+  # The string `JSON.encode!/1` writes for a key. A key that cannot be encoded
+  # gets a unique term, so it never counts as a duplicate; the encoder reports
+  # it later.
+  defp key_string(key) do
+    [string] = %{key => 0} |> JSON.encode!() |> JSON.decode!() |> Map.keys()
+    string
+  rescue
+    _error -> make_ref()
   end
 
   @doc """
@@ -74,7 +146,7 @@ defmodule PactEx.Consumer.BodyCheck do
 
   def validate(:form, body) when is_map(body) do
     Enum.reduce_while(body, :ok, fn {key, value}, :ok ->
-      case form_value(value, "$." <> key) do
+      case form_field(key, value) do
         :ok -> {:cont, :ok}
         {:error, _} = error -> {:halt, error}
       end
@@ -177,6 +249,16 @@ defmodule PactEx.Consumer.BodyCheck do
 
   # pact_ffi first replaces each matcher by its "value", then keeps strings,
   # numbers and lists of those. It drops everything else without an error.
+  # `process_object` removes the top-level keys that start with "pact:" before
+  # the form is built.
+  defp form_field("pact:" <> _ = key, _value) do
+    {:error,
+     "$.#{key}: pact_ffi drops keys that start with \"pact:\" from a form body " <>
+       "(they are reserved for matchers and generators)"}
+  end
+
+  defp form_field(key, value), do: form_value(value, "$." <> key)
+
   defp form_value(value, path) do
     case resolve(value) do
       scalar when is_binary(scalar) or is_number(scalar) ->
@@ -195,6 +277,16 @@ defmodule PactEx.Consumer.BodyCheck do
 
       other ->
         form_error(path, other)
+    end
+  end
+
+  # `process_matcher`: `arrayContains` (or `array-contains`) takes its value
+  # from the list "variants". Any other matcher takes it from "value".
+  defp resolve(%{@matcher_key => type} = matcher)
+       when type in ["arrayContains", "array-contains"] do
+    case Map.get(matcher, "variants") do
+      variants when is_list(variants) -> Enum.map(variants, &resolve/1)
+      _missing -> nil
     end
   end
 

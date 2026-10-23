@@ -111,7 +111,14 @@ element, a text node `%{"content" => "text"}`, or a matcher element
 `%{"pact:matcher:type" => "type", "value" => element}`. Any child can have an
 `"examples"` count that is an integer from 0 up. A form description is a map of
 strings, numbers, matchers with such a value, and lists of them. pact_ffi drops
-nested maps, booleans and `nil` from a form body, so they return an error.
+nested maps, booleans, `nil` and keys that start with `"pact:"` from a form body,
+so they return an error.
+
+A map whose keys collide once turned into strings, such as `%{a: 1, "a" => 2}`,
+returns an error for every content type, at any depth: JSON readers disagree on
+which key wins. Whether a body is XML or form is decided as pact_ffi decides it:
+the content type it can parse (the one you pass with the body, otherwise the
+`Content-Type` header), and a type that is both JSON and XML is JSON.
 
 ```elixir
 PactEx.HTTP.will_respond_with(interaction, 200,

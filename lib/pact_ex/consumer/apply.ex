@@ -22,6 +22,8 @@ defmodule PactEx.Consumer.Apply do
   #   * a map or list body with an XML or form content type is checked by
   #     `PactEx.Consumer.BodyCheck` in `validate/1`, before any native call:
   #     pact_ffi panics (and aborts the VM) on some XML descriptions.
+  #     Which type pact_ffi uses is asked from it (`Native.content_type_kind/1`),
+  #     and colliding map keys are rejected, see `BodyCheck`.
 
   alias PactEx.{Error, Native}
   alias PactEx.Consumer.BodyCheck
@@ -56,7 +58,8 @@ defmodule PactEx.Consumer.Apply do
 
   defp check_body(description, part, %{body: body} = struct)
        when is_map(body) or is_list(body) do
-    with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
+    with :ok <- BodyCheck.key_collision(body),
+         {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
          {:ok, json} <- encode_json(body, "#{part} body"),
          kind when kind != :other <-
            BodyCheck.kind(content_type(struct, headers), header_content_type(headers)),
@@ -75,8 +78,9 @@ defmodule PactEx.Consumer.Apply do
 
   defp body_message(description, part, reason) do
     "#{part} body of interaction #{inspect(description)} cannot be sent: #{reason}. " <>
-      "With an XML or form-urlencoded content type a map or list is a description of " <>
-      "the body in pact_ffi's format, not JSON. Pass a string for a raw body."
+      "A map or list is JSON, except with an XML or form-urlencoded content type, " <>
+      "where it is a description of the body in pact_ffi's format. " <>
+      "Pass a string for a raw body."
   end
 
   @doc """
@@ -225,6 +229,7 @@ defmodule PactEx.Consumer.Apply do
     case List.wrap(values) do
       [value | _] when is_binary(value) -> value
       [%{"value" => value} | _] when is_binary(value) -> value
+      [%{"value" => [value | _]} | _] when is_binary(value) -> value
       _ -> nil
     end
   end
@@ -261,7 +266,11 @@ defmodule PactEx.Consumer.Apply do
   end
 
   defp encode_json(term, label) do
-    {:ok, JSON.encode!(term)}
+    with :ok <- BodyCheck.key_collision(term) do
+      {:ok, JSON.encode!(term)}
+    else
+      {:error, reason} -> {:error, invalid("cannot encode #{label} as JSON: #{reason}")}
+    end
   rescue
     error in [Protocol.UndefinedError, ArgumentError] ->
       {:error, invalid("cannot encode #{label} as JSON: #{Exception.message(error)}")}
