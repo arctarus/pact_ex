@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -16,6 +17,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         beam:
+          # The oldest supported pair.
+          - { otp: "26", elixir: "1.18" }
           - { otp: "27", elixir: "1.18" }
           - { otp: "28", elixir: "1.19" }
     env:
@@ -47,5 +50,14 @@ jobs:
 
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: native/pact_ex_nif
+
+      - run: cargo test
+        working-directory: native/pact_ex_nif
+
+      # The test environment is the one `mix test` uses next, so the NIF is
+      # not built twice.
+      - run: mix compile --warnings-as-errors
+        env:
+          MIX_ENV: test
 
       - run: mix test

@@ -207,13 +207,16 @@ Precompiled NIFs exist for NIF versions 2.16 (OTP 25) and 2.17 (OTP 26, 27 and
 | Linux (glibc) | `aarch64`, `x86_64` |
 | Linux (musl, for example Alpine) | `aarch64`, `x86_64` |
 
-The glibc builds are made on Ubuntu 22.04 and need glibc 2.34 or later. That
-excludes Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2. On those systems,
-use the musl build (it needs the musl libc, for example on Alpine) or
-[build from source](#building-from-source).
+The glibc builds are made on Ubuntu 22.04 and need glibc 2.34 or later on
+`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. That excludes
+Debian 11, Ubuntu 20.04, RHEL 8 and Amazon Linux 2. On those systems
+`rustler_precompiled` still picks the glibc target, so the precompiled NIF
+cannot load. Build from source there (`PACT_EX_BUILD=1`, see
+[building from source](#building-from-source)). The musl builds are for
+musl-based systems such as Alpine, not a fallback for old glibc.
 
-There is no Windows build. CI runs the tests on Linux and macOS with OTP 27 and
-28.
+There is no Windows build. CI runs the tests on Linux and macOS with OTP 26,
+27 and 28.
 
 ## Coming from pact_erlang
 
