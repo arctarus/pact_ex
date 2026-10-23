@@ -40,6 +40,10 @@ fn classify(content_type: &str) -> Kind {
 
 /// Returns `:xml`, `:form`, `:json`, `:other`, or `:invalid` when pact_ffi
 /// cannot parse the content type (it then ignores it).
+///
+/// This stays on a normal scheduler: the input is a header value or an
+/// explicit content type, a few dozen bytes, and parsing it is a matter of
+/// microseconds. (`detect_json` and `json_text_shape` take a whole body.)
 #[rustler::nif]
 fn content_type_kind(content_type: String) -> Atom {
     match classify(&content_type) {
@@ -59,7 +63,15 @@ fn detects_json(text: &str) -> bool {
 }
 
 /// `true` when pact_ffi's content sniffing takes `text` for JSON.
-#[rustler::nif]
+///
+/// `text` is a whole body, so this runs on a dirty CPU scheduler: pact_models
+/// logs the text with `debug!`, uppercases a copy of it and runs four regular
+/// expressions over it, which takes tens of milliseconds for a few MB. There
+/// is no deep recursion to guard against: the `regex` crate matches in linear
+/// time without recursion, and nothing here walks a nested structure, so the
+/// scheduler thread's own stack is enough (no `on_large_stack`). It makes no
+/// `pactffi_*` call, so the clear_error and same-thread rules do not apply.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn detect_json(text: String) -> bool {
     detects_json(&text)
 }
@@ -87,7 +99,16 @@ fn json_shape(text: &str) -> Shape {
 /// Returns `{:object, rendered}` when serde_json parses `text` to a JSON
 /// object, `:other` for any other JSON value, and `:invalid` when it does not
 /// parse.
-#[rustler::nif]
+///
+/// `text` is a whole body, and the parse plus the rendering take over 100 ms
+/// for 4 MB, so this runs on a dirty CPU scheduler. The parse, the rendering
+/// and the drop of the `Value` recurse once per nesting level, but serde_json
+/// stops the parse at a depth of 128, so the stack they use is bounded and
+/// small (kilobytes), and the scheduler thread's own stack is enough (no
+/// `on_large_stack`). Deeper input is `:invalid`, never a stack overflow. It
+/// makes no `pactffi_*` call, so the clear_error and same-thread rules do not
+/// apply.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn json_text_shape<'a>(env: Env<'a>, text: String) -> Term<'a> {
     match json_shape(&text) {
         Shape::Object(rendered) => (atoms::object(), rendered).encode(env),
