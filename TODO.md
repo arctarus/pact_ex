@@ -18,8 +18,12 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 - [ ] Replace `unless` in `PactEx.Matchers` (soft-deprecated style).
 - [ ] The pact_models matcher-expression parser (`matching(...)` strings) has not been audited for panics.
 
+- [ ] Header maps whose keys collapse to the same name after dashing (e.g. `%{:x_request_id => "1", "x-request-id" => "2"}`) silently overwrite one value; reject like two Content-Type spellings.
+- [ ] `apply.ex` module summary (lines ~9 and ~30-34): mention atom header-name dashing and that an element resolving to `[]` at any position is rejected.
+
 ## Minor: tests
 
+- [ ] Response-side Content-Type e2e assertion is weak (pact_ffi adds Content-Type from the text body anyway): add a key-set assertion; add a test for `%{content_type: "a", "Content-Type" => "b"}` → error; fix the `apply_test` comment ("no FFI builder call", not "no native call").
 - [ ] `large_body_test.exs`: restore microstate accounting in `on_exit`; the `dirty > 0` assertion could false-pass on an unrelated dirty GC.
 - [ ] No test for the non-UTF-8 candidate branch in `Apply.classify/1`.
 - [ ] No collision test for a query matcher map.
@@ -34,6 +38,7 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: docs
 
+- [ ] README ~199: rewrap the 97-char line and move "Anything else … raises ArgumentError" next to the `query:`/`headers:` shape sentence.
 - [ ] README: make the "sniffed as JSON" wording precise. pact_models' regex needs `{` followed by `}` or `"\w`, and allows leading Unicode whitespace.
 - [ ] The error message for valid JSON nested deeper than serde_json's limit of 128 says "not valid JSON". Mention the nesting limit.
 - [ ] The `regex/2` doc should justify `term()` values with non-string JSON body values.
