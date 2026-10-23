@@ -1,7 +1,13 @@
 defmodule PactEx.Consumer.BodyCheck do
   @moduledoc false
 
-  # Checks a map or list body before it reaches `pactffi_with_body`.
+  # Checks the text handed to `pactffi_with_body` under an XML or form type.
+  #
+  # PactEx does not predict what pact_ffi will do from the Elixir term. It
+  # chooses ONE content type string (see `PactEx.Consumer.Apply`), passes that
+  # exact string to pact_ffi, and checks the exact bytes it passes, using
+  # pact_models and serde_json themselves for the content type, the sniffing
+  # and the parse (`PactEx.Native`).
   #
   # With an XML or form-urlencoded content type, pact_ffi 0.5.12 does not send
   # the JSON as it is. It reads it as a description of the body. Some shapes
@@ -11,9 +17,9 @@ defmodule PactEx.Consumer.BodyCheck do
   # `pact_ffi-0.5.12/src/mock_server/` (`handles.rs` `process_xml`, `xml.rs`,
   # `form_urlencoded.rs`).
   #
-  # The validator takes the JSON as pact_ffi reads it (the decoded body), and
-  # it accepts every description that pact_ffi turns into a document without
-  # a panic and without dropping data.
+  # The description rules take the JSON as serde_json renders it, and accept
+  # every description that pact_ffi turns into a document without a panic and
+  # without dropping data.
 
   @matcher_key "pact:matcher:type"
   @max_u64 18_446_744_073_709_551_615
@@ -21,111 +27,129 @@ defmodule PactEx.Consumer.BodyCheck do
   alias PactEx.Native
 
   @doc """
-  Says how pact_ffi treats a map or list body: `:xml` (description of an XML
-  document), `:form` (description of a form body), or `:other` (JSON or raw).
+  Checks a body that pact_ffi reads as a description, before it reaches
+  `with_body`. `kind` is `:xml` or `:form`, `text` is the exact string handed
+  to `with_body`, and `origin` is `:encoded` for a map or list that PactEx
+  turned into JSON, or `:text` for a string the caller wrote.
 
-  This follows the real selection in `pactffi_with_body` and `process_body`
-  (pact_ffi 0.5.12, `handles.rs`), with the parsing and the type checks done
-  by pact_models through `PactEx.Native.content_type_kind/1`:
+  This mirrors `process_body` (pact_ffi 0.5.12, `handles.rs`), which looks only
+  at the body text here (the content type was already chosen by PactEx):
 
-    1. `chosen` is the content type passed to `with_body`. If pact_ffi parses
-       it, it is used. This holds even when the header says otherwise.
-    2. If `chosen` does not parse, pact_ffi ignores it and uses the hint: the
-       first value of the part's `Content-Type` header, if that parses
-       (`calc_content_type` in pact_models, `.ok()` on the parse).
-    3. If neither parses, pact_ffi detects the type from the body. A JSON
-       body (always the case here) is neither XML nor form.
-    4. With a parsed type, the branches are tried in this order: JSON, XML,
-       form. So `application/xml+json` is JSON.
+    1. pact_ffi sniffs the text (`detect_content_type_from_string`). Text that
+       is not sniffed as JSON is a raw body and is sent as it is. That is fine
+       for a string, but a map PactEx encoded would go out as its JSON text, so
+       it is an error.
+    2. Sniffed as JSON, the text is parsed with serde_json. XML ends up with an
+       empty body when it does not parse into an object, and a form body
+       panics, so a text that is not a JSON object is an error.
+    3. Duplicate keys are an error (serde_json keeps the last one, other
+       readers the first).
+    4. The decoded object is checked as an XML or form description.
 
-  `header` is the first `Content-Type` header value, or `nil`.
+  The parse in step 2 is done by serde_json itself (`Native.json_text_shape/1`)
+  and the sniffing by pact_models (`Native.detect_json/1`), not by Elixir code.
   """
-  @spec kind(String.t() | nil, String.t() | nil) :: :xml | :form | :other
-  def kind(chosen, header) do
-    case classify(chosen) do
-      :invalid -> header |> classify() |> to_kind()
-      parsed -> to_kind(parsed)
+  @spec check(:xml | :form, String.t(), :encoded | :text) :: :ok | {:error, String.t()}
+  def check(kind, text, origin) do
+    if Native.detect_json(text) do
+      case Native.json_text_shape(text) do
+        {:object, rendered} ->
+          # `decode(text)` finds repeated keys, which serde_json hides. The
+          # description is then checked as serde_json renders it, so numbers
+          # such as -0 or 2^64 are what pact_ffi reads.
+          with {:ok, _decoded} <- decode(text),
+               {:ok, decoded} <- decode(rendered),
+               do: validate(kind, decoded)
+
+        :other ->
+          {:error, "the JSON is not an object, so pact_ffi would build an empty body"}
+
+        :invalid ->
+          {:error,
+           "the text looks like JSON to pact_ffi but is not valid JSON, " <>
+             "and pact_ffi would drop it or panic"}
+      end
+    else
+      case origin do
+        :text -> :ok
+        :encoded -> {:error, "pact_ffi would not read this JSON as a description"}
+      end
     end
   end
-
-  defp to_kind(kind) when kind in [:xml, :form], do: kind
-  defp to_kind(_json_other_or_invalid), do: :other
-
-  # A string that is not UTF-8 cannot reach the NIF. pact_ffi could not read it
-  # either (`convert_cstr` fails), so it is as good as invalid.
-  defp classify(content_type) when is_binary(content_type) do
-    if String.valid?(content_type), do: Native.content_type_kind(content_type), else: :invalid
-  end
-
-  defp classify(_nil), do: :invalid
 
   @doc """
-  Looks for two map keys that become the same JSON key, at any depth, in maps
-  and lists.
+  Decodes `json`, failing when an object repeats a key at any depth.
 
-  `JSON.encode!/1` writes both (`%{:a => 1, "a" => 2}` gives `{"a":1,"a":2}`).
-  Elixir's decoder keeps the first, serde_json in pact_ffi keeps the last, so
-  the two would read different bodies. Returns `{:error, reason}` with the path
-  of the map.
+  The error names the path of the object, for example
+  `$.items[1]: the key "id" appears more than once`. The JSON is decoded as it
+  is, so this sees what the encoder wrote, including structs with their own
+  `JSON.Encoder` and atom, integer or string keys that collide.
   """
-  @spec key_collision(term()) :: :ok | {:error, String.t()}
-  def key_collision(term), do: collision(term, "$")
+  @spec decode(String.t()) :: {:ok, term()} | {:error, String.t()}
+  def decode(json) when is_binary(json) do
+    decoders = [
+      array_start: fn _old -> {0, [], []} end,
+      array_push: &array_push/2,
+      array_finish: fn {_count, items, issues}, old ->
+        {{:node, Enum.reverse(items), issues}, old}
+      end,
+      object_start: fn _old -> {%{}, []} end,
+      object_push: &object_push/3,
+      object_finish: fn {map, issues}, old -> {{:node, map, issues}, old} end
+    ]
 
-  defp collision(map, path) when is_map(map) and not is_struct(map) do
-    keyed = for {key, value} <- map, do: {key_string(key), value}
+    case JSON.decode(json, nil, decoders) do
+      {decoded, nil, rest} ->
+        with :ok <- trailing(rest), do: issues(decoded)
 
-    with :ok <- duplicate(keyed, path) do
-      keyed
-      |> Enum.sort_by(&elem(&1, 0))
-      |> Enum.find_value(:ok, fn {key, value} ->
-        case collision(value, path <> "." <> key_label(key)) do
-          :ok -> nil
-          error -> error
-        end
-      end)
+      {:error, reason} ->
+        {:error, "not valid JSON: #{inspect(reason)}"}
     end
   end
 
-  defp collision(list, path) when is_list(list) do
-    list
-    |> Enum.with_index()
-    |> Enum.find_value(:ok, fn {item, index} ->
-      case collision(item, "#{path}[#{index}]") do
-        :ok -> nil
-        error -> error
-      end
-    end)
+  defp trailing(rest) do
+    if Regex.match?(~r/\A[ \t\r\n]*\z/, rest),
+      do: :ok,
+      else: {:error, "not valid JSON: trailing characters"}
   end
 
-  defp collision(_scalar, _path), do: :ok
+  defp array_push(elem, {count, items, issues}) do
+    {value, child_issues} = unwrap(elem)
+    {count + 1, [value | items], prefix(child_issues, {:index, count}) ++ issues}
+  end
 
-  defp key_label(key) when is_binary(key), do: key
-  defp key_label(key), do: inspect(key)
+  defp object_push(key, elem, {map, issues}) do
+    {value, child_issues} = unwrap(elem)
+    issues = prefix(child_issues, {:key, key}) ++ issues
+    issues = if is_map_key(map, key), do: [{[], key} | issues], else: issues
+    {Map.put(map, key, value), issues}
+  end
 
-  defp duplicate(keyed, path) do
-    keyed
-    |> Enum.frequencies_by(&elem(&1, 0))
-    |> Enum.sort()
-    |> Enum.find_value(:ok, fn
-      {key, count} when count > 1 and is_binary(key) ->
+  defp unwrap({:node, value, issues}), do: {value, issues}
+  defp unwrap(scalar), do: {scalar, []}
+
+  defp prefix(issues, segment),
+    do: Enum.map(issues, fn {path, key} -> {[segment | path], key} end)
+
+  defp issues(root) do
+    case unwrap(root) do
+      {value, []} ->
+        {:ok, value}
+
+      {_value, issues} ->
+        {path, key} = issues |> Enum.reverse() |> hd()
+
         {:error,
-         "#{path}: the key #{inspect(key)} appears #{count} times once converted to a " <>
-           "string (for example as an atom and as a string), and JSON readers disagree " <>
-           "on which one wins"}
-
-      _other ->
-        nil
-    end)
+         "#{format_path(path)}: the key #{inspect(key)} appears more than once in the " <>
+           "same object, and JSON readers disagree on which one wins"}
+    end
   end
 
-  # The string `JSON.encode!/1` writes for a key. A key that cannot be encoded
-  # gets a unique term, so it never counts as a duplicate; the encoder reports
-  # it later.
-  defp key_string(key) do
-    [string] = %{key => 0} |> JSON.encode!() |> JSON.decode!() |> Map.keys()
-    string
-  rescue
-    _error -> make_ref()
+  defp format_path(path) do
+    Enum.reduce(path, "$", fn
+      {:key, key}, acc -> acc <> "." <> key
+      {:index, index}, acc -> "#{acc}[#{index}]"
+    end)
   end
 
   @doc """

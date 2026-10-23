@@ -14,79 +14,6 @@ defmodule PactEx.Consumer.BodyCheckTest do
     assert message =~ fragment
   end
 
-  describe "kind/2" do
-    test "recognizes XML types the way pact_ffi does" do
-      for ct <- [
-            "application/xml",
-            "text/xml",
-            "application/atom+xml",
-            "text/foo+xml",
-            "application/soap+xml; charset=utf-8",
-            "Application/XML",
-            "TEXT/XML; charset=UTF-8",
-            "application/xml;"
-          ] do
-        assert BodyCheck.kind(ct, nil) == :xml, ct
-      end
-    end
-
-    test "other types are not XML" do
-      for ct <- [
-            "application/json",
-            "application/hal+json",
-            "text/plain",
-            "image/svg+xml",
-            "application/xmlish",
-            "application/octet-stream",
-            nil
-          ] do
-        assert BodyCheck.kind(ct, nil) == :other, inspect(ct)
-      end
-    end
-
-    test "recognizes form-urlencoded, ignoring case and parameters" do
-      assert BodyCheck.kind("application/x-www-form-urlencoded", nil) == :form
-      assert BodyCheck.kind("Application/X-WWW-Form-Urlencoded; charset=utf-8", nil) == :form
-      assert BodyCheck.kind("text/x-www-form-urlencoded", nil) == :other
-    end
-
-    test "falls back to the header when the chosen type does not parse" do
-      assert BodyCheck.kind("application/xml ", "application/xml") == :xml
-      assert BodyCheck.kind("nonsense", "application/x-www-form-urlencoded") == :form
-      assert BodyCheck.kind("nonsense", "application/json") == :other
-      assert BodyCheck.kind("nonsense", nil) == :other
-    end
-
-    test "JSON wins over XML when a type is both, as in process_body" do
-      assert BodyCheck.kind("application/xml+json", nil) == :other
-      assert BodyCheck.kind("application/json+xml", nil) == :other
-    end
-
-    test "a chosen type that mime cannot parse falls back to the header, as pact_ffi does" do
-      for chosen <- [
-            "application/json; charset",
-            "application/json,",
-            "application/xml\0",
-            <<255, 254>>
-          ] do
-        assert BodyCheck.kind(chosen, "application/xml") == :xml, inspect(chosen)
-        assert BodyCheck.kind(chosen, "application/x-www-form-urlencoded") == :form
-        assert BodyCheck.kind(chosen, "application/json") == :other
-      end
-    end
-
-    test "a malformed XML type that pact_ffi ignores is not XML" do
-      assert BodyCheck.kind("application/xml; charset", "application/xml; charset") == :other
-      assert BodyCheck.kind("application/xml; charset", nil) == :other
-      assert BodyCheck.kind("application/xml; charset", "application/json") == :other
-    end
-
-    test "a type that parses wins over the header" do
-      assert BodyCheck.kind("application/json", "application/xml") == :other
-      assert BodyCheck.kind("application/xml", "application/json") == :xml
-    end
-  end
-
   describe "validate/2 for XML descriptions that pact_ffi accepts" do
     test "an element with children and text" do
       assert :ok =
@@ -433,39 +360,108 @@ defmodule PactEx.Consumer.BodyCheckTest do
     end
   end
 
-  describe "key_collision/1" do
-    test "accepts maps and lists without colliding keys" do
-      assert :ok = BodyCheck.key_collision(%{:a => 1, "b" => 2, 3 => [%{x: 1, y: 2}]})
-      assert :ok = BodyCheck.key_collision([%{a: 1}, %{"a" => 1}])
-      assert :ok = BodyCheck.key_collision(%{})
-      assert :ok = BodyCheck.key_collision("scalar")
+  describe "decode/1" do
+    test "decodes like JSON.decode!/1 when no key repeats" do
+      json = ~s({"a":[1,2.5,"x",null,true,{"b":{}}],"c":{"d":[]}})
+      assert {:ok, JSON.decode!(json)} == BodyCheck.decode(json)
+      assert {:ok, []} = BodyCheck.decode("[]")
+      assert {:ok, "x"} = BodyCheck.decode(~s("x"))
     end
 
-    test "rejects an atom and a string key that match" do
-      assert_invalid(BodyCheck.key_collision(%{:root => 1, "root" => 2}), ~s|$: the key "root"|)
-    end
+    test "fails on a repeated key and names the path" do
+      assert_invalid(BodyCheck.decode(~s({"a":1,"a":2})), ~s|$: the key "a"|)
 
-    test "rejects other keys that become the same string" do
-      assert_invalid(BodyCheck.key_collision(%{1 => :a, "1" => :b}), ~s|"1"|)
-      assert_invalid(BodyCheck.key_collision(%{nil => 1, "nil" => 2}), ~s|"nil"|)
-      assert_invalid(BodyCheck.key_collision(%{true => 1, "true" => 3}), "2 times")
-    end
-
-    test "reports the path, through maps and lists" do
       assert_invalid(
-        BodyCheck.key_collision(%{"a" => %{"b" => [1, %{:c => 1, "c" => 2}]}}),
-        "$.a.b[1]"
+        BodyCheck.decode(~s({"a":{"b":[1,{"c":1,"c":2}]}})),
+        ~s|$.a.b[1]: the key "c"|
       )
 
-      assert_invalid(BodyCheck.key_collision([%{}, %{:a => 1, "a" => 2}]), "$[1]")
+      assert_invalid(BodyCheck.decode(~s([{}, {"a":1,"\\u0061":2}])), "$[1]")
     end
 
-    test "does not look inside structs" do
-      assert :ok = BodyCheck.key_collision(%{"d" => ~D[2026-10-23]})
+    test "fails on what is not JSON, including trailing text" do
+      for text <- ["", "{", ~s({"a":1} x), "[1,]", ~s({"a":01}), "1e400", ~s("\\ud800")] do
+        assert_invalid(BodyCheck.decode(text), "not valid JSON")
+      end
     end
 
-    test "keys that cannot be encoded are left to the encoder" do
-      assert :ok = BodyCheck.key_collision(%{{1} => 1, {2} => 2})
+    test "tolerates JSON whitespace around the value" do
+      assert {:ok, %{"a" => 1}} = BodyCheck.decode(" \n\t{\"a\": 1} \r\n")
+    end
+
+    test "sees what JSON encoders write: atom, integer and struct keys" do
+      assert_invalid(BodyCheck.decode(JSON.encode!(%{:a => 1, "a" => 2})), "$")
+      assert_invalid(BodyCheck.decode(JSON.encode!(%{1 => 1, "1" => 2})), "$")
+      assert_invalid(BodyCheck.decode(JSON.encode!(%{nil => 1, "nil" => 2})), "$")
+      assert_invalid(BodyCheck.decode(JSON.encode!(%{"s" => [%{:id => 1, "id" => 2}]})), "$.s[0]")
+    end
+  end
+
+  describe "check/3" do
+    @valid_xml ~s({"root":{"name":"r","children":[{"content":"t"}]}})
+
+    test "checks a description that pact_ffi sniffs as JSON" do
+      assert :ok = BodyCheck.check(:xml, @valid_xml, :encoded)
+      assert :ok = BodyCheck.check(:xml, @valid_xml, :text)
+      assert_invalid(BodyCheck.check(:xml, ~s({"root":{"a":"b"}}), :encoded), "$.root")
+      assert_invalid(BodyCheck.check(:xml, ~s({"root":{"a":"b"}}), :text), "$.root")
+      assert :ok = BodyCheck.check(:form, ~s({"a":"b","n":[1,2]}), :text)
+      assert_invalid(BodyCheck.check(:form, ~s({"a":{"b":1}}), :text), "$.a")
+    end
+
+    test "text that is not sniffed as JSON is raw: fine for a string, an error for an encoded map" do
+      for raw <- ["<a/>", ~s(<?xml version="1.0"?><a/>), "a=1&b=2", "plain"] do
+        assert :ok = BodyCheck.check(:xml, raw, :text)
+        assert :ok = BodyCheck.check(:form, raw, :text)
+      end
+
+      assert_invalid(BodyCheck.check(:xml, ~s({"-a":{"name":"r"}}), :encoded), "description")
+      assert_invalid(BodyCheck.check(:form, ~s({"":"x"}), :encoded), "description")
+    end
+
+    test "JSON text that is not an object is an error, as pact_ffi would build an empty body" do
+      for text <- ["[1]", "123", ~s("x"), "null", "true"] do
+        assert_invalid(BodyCheck.check(:xml, text, :text), "not an object")
+        assert_invalid(BodyCheck.check(:form, text, :text), "not an object")
+      end
+    end
+
+    test "text that looks like JSON to pact_ffi but does not parse is an error" do
+      for text <- ["1=a&2=b", "null_flag=1", "true=1", ~s({"a), "123 items"] do
+        assert_invalid(BodyCheck.check(:form, text, :text), "not valid JSON")
+        assert_invalid(BodyCheck.check(:xml, text, :text), "not valid JSON")
+      end
+    end
+
+    test "a repeated key in the text is an error" do
+      assert_invalid(
+        BodyCheck.check(:xml, ~s({"root":{"name":"ok"},"root":{"a":"b"}}), :text),
+        ~s|the key "root"|
+      )
+
+      assert_invalid(BodyCheck.check(:form, ~s({"a":"1","a":"2"}), :text), ~s|the key "a"|)
+    end
+
+    test "nesting beyond serde_json's limit is an error, not a panic" do
+      deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
+      assert_invalid(BodyCheck.check(:form, ~s({"a":#{deep}}), :text), "not valid JSON")
+
+      assert_invalid(
+        BodyCheck.check(:xml, ~s({"root":{"name":"r"},"x":#{deep}}), :text),
+        "not valid JSON"
+      )
+    end
+
+    test "a number that serde_json cannot read as an unsigned integer is rejected in examples" do
+      desc = fn examples ->
+        ~s({"root":{"name":"r","children":[{"name":"c","examples":#{examples}}]}})
+      end
+
+      assert :ok = BodyCheck.check(:xml, desc.("2"), :text)
+
+      for bad <- ["-0", "-1", "2.0", "1e2", "18446744073709551616"] do
+        assert_invalid(BodyCheck.check(:xml, desc.(bad), :text), "examples")
+      end
     end
   end
 

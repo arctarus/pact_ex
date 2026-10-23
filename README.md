@@ -78,14 +78,18 @@ For more control, use `PactEx.Consumer.start_mock_server/3`, then
 
 **Body encoding.** This applies to request and response bodies.
 
-Each request and response has one content type. It is the `content_type:`
-option if you pass it, otherwise the `Content-Type` header, otherwise the
-default of the body type. This holds for every body type.
+Each request and response has one content type. The candidates are the
+`content_type:` option, then the `Content-Type` header, then the default of the
+body type. Each is trimmed, and PactEx uses the first one that pact_ffi can
+parse (`"application/json; charset"` and `"application/json,"` cannot be
+parsed, so they are skipped). That one string is what pact_ffi gets with the
+body. When it came from a string header, the header is written with it too.
+This holds for every body type.
 
 | You pass | Default content type | Sent as |
 |---|---|---|
 | A map or list | `application/json` | JSON. |
-| A UTF-8 string | `text/plain` | Text, byte for byte. |
+| A UTF-8 string | `text/plain` | Text, byte for byte (see XML and form bodies below). |
 | A binary that is not valid UTF-8, or has NUL bytes | `application/octet-stream` | A binary body. |
 
 Any other body type returns `{:error, %PactEx.Error{}}`.
@@ -98,12 +102,20 @@ when `content_type:` differs.
 
 **XML and form bodies.** With an XML content type (`application/xml`,
 `text/xml`, or `application/` or `text/` with a `+xml` suffix) or
-`application/x-www-form-urlencoded`, a map or list
-is not JSON. It is a description of the body in pact_ffi's format. PactEx checks
-the description before it calls pact_ffi, because some shapes make pact_ffi
-panic, which would abort the VM. A bad description returns
+`application/x-www-form-urlencoded`, pact_ffi does not send a JSON body as it
+is. It reads it as a description of the body in its own format. This applies to
+a map or list, and also to a string that pact_ffi's content sniffing takes for
+JSON (text that starts like JSON: `{`, `[`, a digit, `true`, `false`, `null`,
+a quote). PactEx checks the description before it calls pact_ffi, because some
+shapes make pact_ffi panic, which would abort the VM. A bad description returns
 `{:error, %PactEx.Error{code: -101}}` that names the interaction and the path of
-the problem.
+the problem. A type that is both JSON and XML (`application/xml+json`) is JSON.
+
+A string that is not sniffed as JSON (raw XML, `a=1&b=2`) is sent byte for byte.
+A string that is sniffed as JSON must be a JSON object that is a valid
+description. For XML, a description is turned into XML. A raw form string that
+starts like JSON, such as `1=a&2=b` or `null_flag=1`, returns an error, because
+pact_ffi would panic on it.
 
 An XML description is a map with a `"root"` element. An element is
 `%{"name" => ..., "attributes" => %{...}, "children" => [...]}`. A child is an
@@ -114,11 +126,11 @@ strings, numbers, matchers with such a value, and lists of them. pact_ffi drops
 nested maps, booleans, `nil` and keys that start with `"pact:"` from a form body,
 so they return an error.
 
-A map whose keys collide once turned into strings, such as `%{a: 1, "a" => 2}`,
-returns an error for every content type, at any depth: JSON readers disagree on
-which key wins. Whether a body is XML or form is decided as pact_ffi decides it:
-the content type it can parse (the one you pass with the body, otherwise the
-`Content-Type` header), and a type that is both JSON and XML is JSON.
+PactEx encodes every JSON once and checks those exact bytes. An object that
+repeats a key returns an error, at any depth, for every content type. This
+covers keys that collide once turned into strings (`%{a: 1, "a" => 2}`), structs
+that encode to a repeated key, and matcher maps in headers, paths and provider
+state params. JSON readers disagree on which key wins.
 
 ```elixir
 PactEx.HTTP.will_respond_with(interaction, 200,
@@ -133,7 +145,7 @@ PactEx.HTTP.will_respond_with(interaction, 200,
 )
 ```
 
-For raw XML or a raw form, pass a string. It is sent byte for byte:
+For raw XML or a raw form, pass a string:
 
 ```elixir
 PactEx.HTTP.with_request(interaction, :post, "/notes",
