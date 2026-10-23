@@ -9,7 +9,7 @@ defmodule PactEx.AbortCases do
 
   `all/0` is the list of cases. Each has a `name`, the `expect`ed outcome
   (`:ok` when the server starts and answers, `:invalid` when `PactEx` returns a
-  `-101` error, `:any` when either is fine) and a `build` function that makes
+  `-101` error) and a `build` function that makes
   the interaction. `run/1` runs one case in the current process and prints
   the outcome on a line that starts with `ABORT_CASE_RESULT`.
   """
@@ -176,19 +176,31 @@ defmodule PactEx.AbortCases do
   end
 
   # explicit content type x Content-Type header, with a body that is invalid
-  # as an XML description. Either the type resolves to XML and the body is
-  # rejected, or it does not and the body is JSON.
+  # as an XML description. Each cell is pinned to the outcome that follows from
+  # `PactEx.Consumer.Apply.choose_type/3`: the first of the explicit type, the
+  # Content-Type header and the default `application/json` that is trimmed and
+  # parsed by pact_models wins. The body is rejected (:invalid) only when that
+  # type is XML. Under any other type it is JSON and the server starts (:ok).
+  #
+  # What each header column contributes as a candidate:
+  #
+  #   * absent: none, so the default (JSON) applies;
+  #   * plain xml, padded xml, matcher padded: the string, trimmed, is
+  #     `application/xml`, so XML wins unless an explicit type parses first;
+  #   * json text: the string `{"value":"application/xml"}` is not a content
+  #     type pact_models parses as XML, so it adds nothing;
+  #   * atom map, nested list matcher: `header_value/1` only reads a string
+  #     under the "value" key, and these have an atom key or a list value, so
+  #     they add no candidate.
+  #
+  # And each explicit row:
+  #
+  #   * none: the header decides, as above;
+  #   * json: parses and is not XML, so it wins over every header;
+  #   * padded xml, xml, +xml: parse (after the trim) as XML, and win;
+  #   * mime-invalid param, mime-invalid comma: pact_models cannot parse them,
+  #     so they are skipped and the header decides, as for "none".
   defp type_matrix do
-    explicit = [
-      {"none", []},
-      {"json", [content_type: "application/json"]},
-      {"padded xml", [content_type: " application/xml "]},
-      {"mime-invalid param", [content_type: "application/json; charset"]},
-      {"mime-invalid comma", [content_type: "application/json,"]},
-      {"xml", [content_type: @xml]},
-      {"+xml", [content_type: "text/foo+xml"]}
-    ]
-
     headers = [
       {"absent", []},
       {"plain xml", [headers: %{"Content-Type" => @xml}]},
@@ -212,8 +224,27 @@ defmodule PactEx.AbortCases do
        ]}
     ]
 
-    for {en, eopts} <- explicit, {hn, hopts} <- headers do
-      case_response("types: explicit #{en}, header #{hn}", :any, eopts ++ hopts, @bad_description)
+    # The outcome of each header column, in the order of `headers`.
+    header_decides = [:ok, :invalid, :invalid, :invalid, :ok, :ok, :ok]
+
+    explicit = [
+      {"none", [], header_decides},
+      {"json", [content_type: "application/json"], List.duplicate(:ok, 7)},
+      {"padded xml", [content_type: " application/xml "], List.duplicate(:invalid, 7)},
+      {"mime-invalid param", [content_type: "application/json; charset"], header_decides},
+      {"mime-invalid comma", [content_type: "application/json,"], header_decides},
+      {"xml", [content_type: @xml], List.duplicate(:invalid, 7)},
+      {"+xml", [content_type: "text/foo+xml"], List.duplicate(:invalid, 7)}
+    ]
+
+    for {en, eopts, expected} <- explicit,
+        {{hn, hopts}, expect} <- Enum.zip(headers, expected) do
+      case_response(
+        "types: explicit #{en}, header #{hn}",
+        expect,
+        eopts ++ hopts,
+        @bad_description
+      )
     end
   end
 

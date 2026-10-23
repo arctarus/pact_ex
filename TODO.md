@@ -4,7 +4,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Important
 
-- [ ] **The abort matrix only checks that nothing crashes.** Its 49 type × header cells use `expect: :any`. Pin each cell to its deterministic outcome (`:ok` or `-101`), so a wrong classification fails the test.
 - [ ] **`detect_json/1` and `json_text_shape/1` scan the whole body on a normal scheduler.** Multi-MB bodies can block it well past 1 ms. Move them to `DirtyCpu`, or call them only above a size threshold.
 - [ ] **Validate the first tag release on GitHub.** None of the 12 release jobs has run, and the aarch64-gnu and musl cross builds are untested. Run `objdump -T` on the x86_64-gnu artifact to confirm the glibc 2.34 floor.
 

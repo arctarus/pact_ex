@@ -45,9 +45,6 @@ defmodule PactEx.AbortMatrixTest do
       expect == :invalid and outcome != "{:error, -101}" ->
         {name, "expected -101, got #{inspect(outcome)}"}
 
-      expect == :any and outcome not in [":ok", "{:error, -101}"] ->
-        {name, "expected :ok or -101, got #{inspect(outcome)}"}
-
       true ->
         nil
     end
@@ -71,9 +68,15 @@ defmodule PactEx.AbortMatrixTest do
     end
   end
 
-  test "the case names are unique and every case has an expectation" do
+  test "the case names are unique and every case is pinned to :ok or :invalid" do
     names = Enum.map(AbortCases.all(), & &1.name)
     assert names == Enum.uniq(names)
-    assert Enum.all?(AbortCases.all(), &(&1.expect in [:ok, :invalid, :any]))
+
+    loose =
+      for %{name: name, expect: expect} <- AbortCases.all(),
+          expect not in [:ok, :invalid],
+          do: name
+
+    assert loose == []
   end
 end
