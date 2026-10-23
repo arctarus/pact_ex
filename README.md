@@ -175,6 +175,23 @@ PactEx.HTTP.with_request(interaction, :get, "/animals",
 )
 ```
 
+`query:` and `headers:` also take a keyword list or a list of `{name, value}`
+tuples, as Req and Plug do. A name that repeats gets all its values, in order:
+
+```elixir
+PactEx.HTTP.with_request(interaction, :get, "/animals",
+  query: [tag: "a", tag: "b", limit: 10],
+  headers: [{"x-request-id", "abc-1"}, accept: "application/json"]
+)
+```
+
+That is `%{"tag" => ["a", "b"], "limit" => 10}` for the query. A list value
+counts as several values (`[tag: ["a", "b"], tag: "c"]` has three). Query names
+are case-sensitive. Header names are not, so `[{"Accept", "a"}, accept: "b"]`
+is one header with two values, named as in its first spelling. A map is never
+merged and is used as you wrote it. Anything else (a string, a list that holds
+something other than a `{name, value}` tuple) raises `ArgumentError`.
+
 `nil` and other types return `{:error, %PactEx.Error{}}`. So does an empty list
 (`"tag" => []`), which would drop the parameter without a word. The error names
 the header or parameter.

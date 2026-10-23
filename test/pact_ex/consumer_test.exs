@@ -1150,6 +1150,102 @@ defmodule PactEx.ConsumerTest do
     end
   end
 
+  describe "run/4 keyword lists and lists of pairs for headers and query" do
+    test "keyword query and headers with repeated keys match a real request and are recorded",
+         %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("keyword lists")
+        |> HTTP.with_request(:get, "/k",
+          query: [tag: "a", page: 2, tag: "b", active: true],
+          headers: [{"X-Trace", "1"}, accept: "application/json", x_multi: "m1", x_multi: "m2"]
+        )
+        |> HTTP.will_respond_with(200,
+          headers: [{"x-out", "o1"}, {"X-Out", "o2"}, etag: "abc"],
+          body: %{"ok" => true}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.get!(m.url <> "/k?tag=a&page=2&tag=b&active=true",
+                     headers: [
+                       {"x-trace", "1"},
+                       {"accept", "application/json"},
+                       {"x_multi", "m1"},
+                       {"x_multi", "m2"}
+                     ],
+                     retry: false
+                   )
+
+                 assert resp.status == 200
+                 assert resp.body == %{"ok" => true}
+                 assert Req.Response.get_header(resp, "x-out") == ["o1", "o2"]
+                 assert Req.Response.get_header(resp, "etag") == ["abc"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      assert written["request"]["query"] == %{
+               "tag" => ["a", "b"],
+               "page" => ["2"],
+               "active" => ["true"]
+             }
+
+      assert written["request"]["headers"]["X-Trace"] == ["1"]
+      assert written["request"]["headers"]["accept"] == ["application/json"]
+      assert written["request"]["headers"]["x_multi"] == ["m1", "m2"]
+      assert written["response"]["headers"]["x-out"] == ["o1", "o2"]
+      assert written["response"]["headers"]["etag"] == ["abc"]
+    end
+
+    test "the same interaction with maps gives the same pact file", %{pact: pact, tmp_dir: dir} do
+      kw =
+        HTTP.interaction("same")
+        |> HTTP.with_request(:get, "/s", query: [tag: "a", tag: "b"], headers: [{"x-id", "1"}])
+        |> HTTP.will_respond_with(200, headers: [{"x-out", "a"}, {"x-out", "b"}])
+
+      map =
+        HTTP.interaction("same")
+        |> HTTP.with_request(:get, "/s", query: %{"tag" => ["a", "b"]}, headers: %{"x-id" => "1"})
+        |> HTTP.will_respond_with(200, headers: %{"x-out" => ["a", "b"]})
+
+      map_dir = Path.join(dir, "map")
+      map_pact = PactEx.new("consumer-test", "provider-test", pact_dir: map_dir)
+
+      call = fn m ->
+        assert %{status: 200} =
+                 Req.get!(m.url <> "/s?tag=a&tag=b", headers: [{"x-id", "1"}], retry: false)
+      end
+
+      assert :ok = Consumer.run(pact, [kw], call)
+      assert :ok = Consumer.run(map_pact, [map], call)
+
+      assert read_pact(dir)["interactions"] == read_pact(map_dir)["interactions"]
+    end
+
+    test "a nil value in a list is rejected like in a map", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("nil in a keyword list")
+        |> HTTP.with_request(:get, "/n", query: [tag: nil])
+        |> HTTP.will_respond_with(200)
+
+      assert {:error, %PactEx.Error{code: -101}} = Consumer.start_mock_server(pact, [i])
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "an empty list value in a keyword list is rejected, naming the key", %{pact: pact} do
+      i =
+        HTTP.interaction("empty in a keyword list")
+        |> HTTP.with_request(:get, "/n", query: [tag: []])
+        |> HTTP.will_respond_with(200)
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ ~s("tag")
+    end
+  end
+
   describe "run/4 empty Content-Type values and empty lists of values" do
     # pact_ffi records an empty or blank Content-Type as an empty string, which
     # no client sends: the mock server answers 500 for every request. A `[]`

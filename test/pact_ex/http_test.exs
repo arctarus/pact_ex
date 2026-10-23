@@ -257,25 +257,164 @@ defmodule PactEx.HTTPTest do
       end
     end
 
-    test "with_request/4 rejects non-map query and headers" do
-      for opts <- [
-            [query: [{"a", "1"}]],
-            [query: "a=1"],
-            [headers: [{"accept", "x"}]],
-            [headers: {"accept", "x"}]
+    test "with_request/4 rejects a :query or :headers that is not a map or a list of pairs" do
+      for key <- [:query, :headers],
+          value <- [
+            "a=1",
+            {"accept", "x"},
+            :accept,
+            nil,
+            42,
+            [:accept],
+            ["accept"],
+            [{"accept"}],
+            [{"accept", "x", "y"}],
+            [{"accept", "x"}, :oops],
+            [{"accept", "x"} | :tail],
+            [{1, "x"}],
+            [{nil, "x"}],
+            [{true, "x"}],
+            [{%{}, "x"}],
+            [{["a"], "x"}]
           ] do
-        assert_raise ArgumentError, ~r/must be a map/, fn ->
-          HTTP.interaction("x") |> HTTP.with_request(:get, "/", opts)
+        assert_raise ArgumentError, ~r/option #{inspect(key)} must be a map or a list/, fn ->
+          HTTP.interaction("x") |> HTTP.with_request(:get, "/", [{key, bad(value)}])
         end
       end
     end
 
-    test "will_respond_with/3 rejects non-map headers" do
-      for headers <- [[{"x-id", "1"}], {"x-id", "1"}, "x-id: 1"] do
-        assert_raise ArgumentError, ~r/must be a map/, fn ->
-          HTTP.interaction("x") |> HTTP.will_respond_with(200, headers: headers)
+    test "will_respond_with/3 rejects a :headers that is not a map or a list of pairs" do
+      for headers <- [
+            {"x-id", "1"},
+            "x-id: 1",
+            :x,
+            nil,
+            [:x],
+            [{"x-id"}],
+            [{"x-id", "1", "2"}],
+            [{"x-id", "1"} | :tail],
+            [{1, "1"}],
+            [{nil, "1"}]
+          ] do
+        assert_raise ArgumentError, ~r/option :headers must be a map or a list/, fn ->
+          HTTP.interaction("x") |> HTTP.will_respond_with(200, headers: bad(headers))
         end
       end
+    end
+
+    test "the error names the offending value" do
+      error =
+        assert_raise ArgumentError, fn ->
+          HTTP.interaction("x") |> HTTP.with_request(:get, "/", query: bad([{"a", "1"}, :oops]))
+        end
+
+      assert error.message =~ ":oops"
+      assert error.message =~ "keyword list"
+      assert error.message =~ "{name, value}"
+    end
+  end
+
+  describe "keyword lists and lists of pairs for :query and :headers" do
+    defp request_of(opts) do
+      %HTTP.Request{} =
+        HTTP.interaction("x") |> HTTP.with_request(:get, "/", opts) |> Map.fetch!(:request)
+    end
+
+    defp response_of(opts) do
+      %HTTP.Response{} =
+        HTTP.interaction("x") |> HTTP.will_respond_with(200, opts) |> Map.fetch!(:response)
+    end
+
+    test "a keyword list becomes a map with string names" do
+      assert request_of(headers: [accept: "json", x_id: "1"]).headers ==
+               %{"accept" => "json", "x_id" => "1"}
+
+      assert request_of(query: [page: 2, active: true]).query == %{"page" => 2, "active" => true}
+      assert response_of(headers: [etag: "abc"]).headers == %{"etag" => "abc"}
+    end
+
+    test "a list of {name, value} tuples becomes a map" do
+      assert request_of(headers: [{"x-id", "1"}, {"accept", "json"}]).headers ==
+               %{"x-id" => "1", "accept" => "json"}
+
+      assert request_of(query: [{"a", "1"}]).query == %{"a" => "1"}
+      assert response_of(headers: [{"x-id", "1"}]).headers == %{"x-id" => "1"}
+    end
+
+    test "tuples and keywords can be mixed, and atoms and strings are both names" do
+      assert request_of(headers: [{"x-id", "1"}, accept: "json"]).headers ==
+               %{"x-id" => "1", "accept" => "json"}
+    end
+
+    test "an empty list is an empty map" do
+      assert request_of(query: [], headers: []) |> Map.take([:query, :headers]) ==
+               %{query: %{}, headers: %{}}
+
+      assert response_of(headers: []).headers == %{}
+    end
+
+    test "a repeated name becomes multiple values, in order" do
+      assert request_of(query: [tag: "a", tag: "b"]).query == %{"tag" => ["a", "b"]}
+
+      assert request_of(query: [tag: "a", tag: "b"]).query ==
+               request_of(query: %{"tag" => ["a", "b"]}).query
+
+      assert request_of(query: [tag: "a", page: 2, tag: "b", tag: "c"]).query ==
+               %{"tag" => ["a", "b", "c"], "page" => 2}
+
+      assert response_of(headers: [{"x-out", "b"}, {"x-out", "a"}]).headers ==
+               %{"x-out" => ["b", "a"]}
+    end
+
+    test "a list value is multiple values and is joined with the repeats around it" do
+      assert request_of(query: [tag: ["a", "b"], tag: "c", tag: ["d"]]).query ==
+               %{"tag" => ["a", "b", "c", "d"]}
+
+      assert request_of(query: [tag: ["a"]]).query == %{"tag" => ["a"]}
+      assert request_of(query: [tag: ["a", "b"]]).query == %{"tag" => ["a", "b"]}
+    end
+
+    test "an empty list value is kept alone, and adds nothing next to other values" do
+      assert request_of(query: [tag: []]).query == %{"tag" => []}
+      assert request_of(query: [tag: [], tag: "a"]).query == %{"tag" => ["a"]}
+    end
+
+    test "query names are case-sensitive, so different case stays apart" do
+      assert request_of(query: [{"Tag", "a"}, tag: "b", Tag: "c"]).query ==
+               %{"Tag" => ["a", "c"], "tag" => "b"}
+    end
+
+    test "header names are case-insensitive: they are merged, the first spelling is kept" do
+      assert request_of(headers: [{"X-Tag", "a"}, "x-tag": "b", "X-TAG": "c"]).headers ==
+               %{"X-Tag" => ["a", "b", "c"]}
+
+      assert response_of(headers: [{"x-out", "a"}, {"X-Out", ["b", "c"]}, other: "z"]).headers ==
+               %{"x-out" => ["a", "b", "c"], "other" => "z"}
+
+      assert request_of(headers: [{"Content-Type", "a/b"}, "content-type": "c/d"]).headers ==
+               %{"Content-Type" => ["a/b", "c/d"]}
+    end
+
+    test "values are passed through as they are, for Apply to check" do
+      matcher = %{"pact:matcher:type" => "type", "value" => "x"}
+
+      assert request_of(headers: [accept: matcher, x: nil, y: 1]).headers ==
+               %{"accept" => matcher, "x" => nil, "y" => 1}
+    end
+
+    test "a map is stored exactly as it was given" do
+      headers = %{:x => "1", "Accept" => "json", "accept" => "dup"}
+      query = %{"tag" => ["a"], page: 2}
+
+      assert request_of(headers: headers, query: query) |> Map.take([:headers, :query]) ==
+               %{headers: headers, query: query}
+
+      assert response_of(headers: headers).headers == headers
+    end
+
+    test "the defaults are still empty maps" do
+      assert request_of([]) |> Map.take([:headers, :query]) == %{headers: %{}, query: %{}}
+      assert response_of([]).headers == %{}
     end
   end
 

@@ -17,7 +17,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
   - the `Outcome` encoder has an unneeded `clone`;
   - `arg_cstring` and `port_arg` are not in `args.rs`.
 - [ ] `String.trim/1` and Rust's `str::trim` may disagree on some Unicode whitespace (log file paths).
-- [ ] Consider accepting keyword lists for `headers:` and `query:`, since Req users write them that way.
 - [ ] Replace `unless` in `PactEx.Matchers` (soft-deprecated style).
 - [ ] The pact_models matcher-expression parser (`matching(...)` strings) has not been audited for panics.
 
