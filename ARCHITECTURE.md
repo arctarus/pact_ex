@@ -73,7 +73,7 @@ The entry point for tests.
 
 There is no GenServer and no shared state. Every `run/4` call gets its own pact handle and mock server, so `async: true` tests are safe.
 
-#### `PactEx.Consumer.Apply` (`lib/pact_ex/consumer/apply.ex`, internal)
+#### PactEx.Consumer.Apply (`lib/pact_ex/consumer/apply.ex`, internal)
 Turns an `Interaction` into native calls in two phases:
 - **Plan:** `plan/1` decides everything before any FFI builder call:
   - the encoding of query, header and path values (strings, matchers, scalars, lists);
@@ -84,7 +84,7 @@ Turns an `Interaction` into native calls in two phases:
 
 Every JSON PactEx writes is decoded again with a decoder that fails on a repeated key. So the bytes checked are exactly the bytes sent.
 
-#### `PactEx.Consumer.BodyCheck` (`lib/pact_ex/consumer/body_check.ex`, internal)
+#### PactEx.Consumer.BodyCheck (`lib/pact_ex/consumer/body_check.ex`, internal)
 pact_ffi reads a JSON body under an XML or `application/x-www-form-urlencoded` content type as a *description* of the body. Some descriptions make pact_ffi panic inside an `extern "C"` function, which aborts the BEAM. `BodyCheck` validates those descriptions, including string bodies that pact_ffi's sniffing takes for JSON, and returns `{:error, %PactEx.Error{code: -101}}` naming the interaction and the path of the problem.
 
 ### 3. Mock Server (`lib/pact_ex/mock_server.ex`)
@@ -112,7 +112,7 @@ It keeps a reference to the pact resource, so the pact handle lives as long as t
 ### 6. NIF Layer
 
 #### Elixir side (`lib/pact_ex/native.ex`)
-`PactEx.Native` uses `RustlerPrecompiled`:
+**PactEx.Native** uses `RustlerPrecompiled`:
 - It downloads the NIF for the current target, or builds it from source in dev/test, or when `PACT_EX_BUILD=1`.
 - It declares a stub for each NIF.
 - It is `@moduledoc false`. Users never call it directly.
