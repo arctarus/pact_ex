@@ -302,7 +302,9 @@ defmodule PactEx.AbortCases do
   # `pactffi_with_body` panic (pact_models indexes `v[0]`). All of these are
   # rejected, with or without a body. A list with an empty element at any
   # position is rejected too: pact_ffi records `["", "text/plain"]`, which no
-  # client can match. Anything that keeps a non-empty value everywhere is served.
+  # client can match. So are an empty or whitespace-only string and a `[]` header
+  # value, which the mock server could never match either. Anything that keeps
+  # a non-blank value everywhere is served.
   defp empty_content_type do
     empty = %{"value" => []}
     matcher = %{"pact:matcher:type" => "type", "value" => []}
@@ -332,7 +334,19 @@ defmodule PactEx.AbortCases do
       {"list of json texts", ct_header.([~s({"value":[]})])},
       {"lowercase name", %{"content-type" => empty}},
       {"atom name", %{"Content-Type": empty}},
-      {"lowercase atom name", %{"content-type": empty}}
+      {"lowercase atom name", %{"content-type": empty}},
+      {"empty string", ct_header.("")},
+      {"blank string", ct_header.("  ")},
+      {"whole header is an empty list", ct_header.([])},
+      {"list, empty string first", ct_header.(["", "text/plain"])},
+      {"list, empty string last", ct_header.(["text/plain", ""])},
+      {"list, blank string in the middle", ct_header.(["a/b", " ", "text/plain"])},
+      {"matcher with an empty string", ct_header.(%{"value" => ""})},
+      {"matcher with a blank string",
+       ct_header.(%{"pact:matcher:type" => "type", "value" => " "})},
+      {"array with an empty string", ct_header.(%{"value" => ["a/b", ""]})},
+      {"json text, blank string", ct_header.(~s({"value":"  "}))},
+      {"lowercase name, empty string", %{"content-type" => ""}}
     ]
 
     # {name, body, options}
@@ -350,7 +364,7 @@ defmodule PactEx.AbortCases do
     some_bodies =
       Enum.filter(all_bodies, &(elem(&1, 0) in ["map body", "string body", "no body"]))
 
-    core = ["value", "matcher", "json text"]
+    core = ["value", "matcher", "json text", "empty string", "blank string"]
 
     rejected =
       for {hn, headers} <- rejected_headers,
@@ -376,7 +390,9 @@ defmodule PactEx.AbortCases do
     request =
       for {hn, headers} <- [
             {"value", ct_header.(empty)},
-            {"list, empty first", ct_header.([empty, "text/plain"])}
+            {"list, empty first", ct_header.([empty, "text/plain"])},
+            {"empty string", ct_header.("")},
+            {"list, empty string first", ct_header.(["", "text/plain"])}
           ],
           {bn, body, bopts} <- request_bodies do
         %{
@@ -401,8 +417,6 @@ defmodule PactEx.AbortCases do
       {"object without a value", ct_header.(%{"other" => []})},
       {"json text, non-empty", ct_header.(~s({"value":["application/json"]}))},
       {"json text, not an object", ct_header.("[]")},
-      {"empty string", ct_header.("")},
-      {"whole header is an empty list", ct_header.([])},
       {"list of strings", ct_header.(["application/json", "extra"])},
       {"another header with an empty array", %{"X-Other" => empty}}
     ]

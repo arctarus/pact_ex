@@ -22,7 +22,8 @@ defmodule PactEx.Consumer do
     * Paths, query values and header values are strings or matcher maps
       (see `PactEx.Matchers`). Query and header values may also be integers,
       floats or booleans, which become strings. A list gives a multi-valued
-      parameter. `nil` and other types are rejected.
+      parameter. `nil`, an empty list and other types are rejected: an empty
+      list would drop the parameter without a word.
     * Query and header names are strings or atoms.
     * Each request and response has one body content type. The candidates are
       the `:content_type` option, the `Content-Type` header, and the default
@@ -39,7 +40,9 @@ defmodule PactEx.Consumer do
       `{:error, %PactEx.Error{code: -101}}`, with or without a body. That
       holds for any element of a list. As the whole header or the last
       element, pact_ffi aborts the VM on it. Before a later element, it
-      records an empty string that no client can match.
+      records an empty string that no client can match. An empty or
+      whitespace-only string (as the value, an element or a matcher's
+      `"value"`) is rejected too.
     * The default is `application/json` for a map or list, `text/plain` for a
       string that is valid UTF-8 without NUL bytes, and
       `application/octet-stream` for any other binary.

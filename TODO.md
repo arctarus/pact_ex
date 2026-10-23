@@ -4,7 +4,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: code
 
-- [ ] Decide on a literal `""` element in a Content-Type list (e.g. `["", "text/plain"]`): it is accepted today but pact_ffi stores it like the rejected empty-element case.
 - [ ] Content-Type empty-element wording: update the module summary in `apply.ex` (~30-32) to cover the any-position rule; the "no client can match" rationale only fits the request side (response side: a provider can't produce it) in `apply.ex`, the error message, README and `consumer.ex`; reword "has its value that resolves…" and pin that non-list branch in a test.
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
 - [ ] Wrap `mock_server_matched` / `mock_server_mismatches` in `on_large_stack`. Plan 2 needs this, because plugin mock servers run gRPC `block_on` under `MANAGER`.
@@ -12,7 +11,6 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 - [ ] Builder NIFs and resource `Drop` take the global `PACT_HANDLES` lock on normal schedulers, so they can stall while a pact write runs. Document it, or make them `DirtyCpu`.
 - [ ] A huge `examples` count in an XML description can stall `with_body` or run out of memory. It isn't rejected, because pact_ffi accepts it.
 - [ ] pact_ffi silently drops a form value whose matcher fails to build (e.g. `regex` without `"regex"`).
-- [ ] Query and header values of `[]` drop the parameter silently.
 - [ ] `PactEx.Error.message/1` repeats the code twice ("… failed with code 1 (code 1)").
 - [ ] Rust cleanups:
   - the `Created` wrapper is redundant, since the `Result` encoder already does its job;

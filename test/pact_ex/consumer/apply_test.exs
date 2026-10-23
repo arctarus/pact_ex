@@ -4,6 +4,8 @@ defmodule PactEx.Consumer.ApplyTest do
   alias PactEx.{Consumer.Apply, HTTP, Native}
   alias PactEx.HTTP.Interaction
 
+  @entry "PactEx.Consumer.start_mock_server/3"
+
   defp pact_ref, do: Native.new_pact("apply-consumer", "apply-provider")
 
   defp serve(pact) do
@@ -42,17 +44,93 @@ defmodule PactEx.Consumer.ApplyTest do
     assert Native.mock_server_matched(port)
   end
 
-  test "an empty list of values makes no calls" do
-    pact = pact_ref()
+  describe "validate/1: an empty list of values for a header or query parameter" do
+    test "is rejected for any query parameter, naming it" do
+      for query <- [%{"q" => []}, %{q: []}, %{"ok" => "1", "tag" => []}] do
+        i =
+          HTTP.interaction("empty query")
+          |> HTTP.with_request(:get, "/empty", query: query)
 
-    i =
-      HTTP.interaction("empty lists")
-      |> HTTP.with_request(:get, "/empty", query: %{"q" => []}, headers: %{"x" => []})
-      |> HTTP.will_respond_with(200)
+        assert {:error, %PactEx.Error{code: -101, function: @entry, message: message}} =
+                 Apply.validate(i),
+               inspect(query)
 
-    assert :ok = Apply.interaction(pact, i)
-    port = serve(pact)
-    assert %{status: 200} = Req.get!("http://127.0.0.1:#{port}/empty")
+        assert message =~ "request query parameter"
+        assert message =~ "empty list"
+        assert message =~ "empty query"
+
+        assert message =~
+                 ~s("#{Enum.find_value(query, fn
+                   {k, []} -> to_string(k)
+                   _ -> nil
+                 end)}")
+      end
+    end
+
+    test "is rejected for any request or response header, naming it" do
+      headers = [%{"x" => []}, %{x: []}, %{"Content-Type" => []}, %{"ok" => "1", "X-Id" => []}]
+
+      for headers <- headers do
+        name =
+          Enum.find_value(headers, fn
+            {k, []} -> to_string(k)
+            _ -> nil
+          end)
+
+        request =
+          HTTP.interaction("empty header")
+          |> HTTP.with_request(:get, "/empty", headers: headers)
+
+        response =
+          HTTP.interaction("empty header")
+          |> HTTP.with_request(:get, "/empty")
+          |> HTTP.will_respond_with(200, headers: headers)
+
+        assert {:error, %PactEx.Error{code: -101, function: @entry, message: message}} =
+                 Apply.validate(request),
+               inspect(headers)
+
+        assert message =~ "request header"
+        assert message =~ ~s("#{name}")
+        assert message =~ "empty list"
+
+        assert {:error, %PactEx.Error{code: -101, function: @entry, message: message}} =
+                 Apply.validate(response),
+               inspect(headers)
+
+        assert message =~ "response header"
+        assert message =~ ~s("#{name}")
+      end
+    end
+
+    test "is rejected before any native call by interaction/2 as well" do
+      i =
+        HTTP.interaction("empty query")
+        |> HTTP.with_request(:get, "/empty", query: %{"q" => []})
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Apply.interaction(pact_ref(), i)
+
+      assert message =~ ~s("q")
+    end
+
+    test "a value that is a list with elements is still applied" do
+      pact = pact_ref()
+
+      i =
+        HTTP.interaction("lists")
+        |> HTTP.with_request(:get, "/lists",
+          query: %{"q" => ["a", "b"]},
+          headers: %{"x" => ["1"]}
+        )
+        |> HTTP.will_respond_with(200)
+
+      assert :ok = Apply.interaction(pact, i)
+      port = serve(pact)
+
+      assert %{status: 200} =
+               Req.get!("http://127.0.0.1:#{port}/lists?q=a&q=b", headers: [x: "1"])
+    end
   end
 
   test "returns an error naming the interaction when the request is missing" do
@@ -111,8 +189,6 @@ defmodule PactEx.Consumer.ApplyTest do
   end
 
   describe "validate/1: a Content-Type header that pact_ffi would store as an empty list" do
-    @entry "PactEx.Consumer.start_mock_server/3"
-
     defp response_with(headers, opts \\ []) do
       HTTP.interaction("probe")
       |> HTTP.with_request(:get, "/x")
@@ -191,6 +267,62 @@ defmodule PactEx.Consumer.ApplyTest do
       end
     end
 
+    test "rejects an empty or whitespace-only value, alone or as any element" do
+      blank_matcher = %{"pact:matcher:type" => "type", "value" => " "}
+
+      cases = [
+        {"", nil},
+        {" ", nil},
+        {"\t\r\n ", nil},
+        {%{"value" => ""}, nil},
+        {blank_matcher, nil},
+        {%{value: ""}, nil},
+        {~s({"value":""}), nil},
+        {~s( {"value" : "  "}\n), nil},
+        {%{"value" => [""]}, nil},
+        {%{"value" => ["a/b", " "]}, nil},
+        {["", "text/plain"], 0},
+        {["text/plain", ""], 1},
+        {["text/plain", "text/csv", " "], 2},
+        {["a/b", %{"value" => ""}, "c/d"], 1},
+        {[~s({"value":""}), "text/plain"], 0},
+        {["a/b", %{"value" => ["c/d", ""]}], 1}
+      ]
+
+      for {value, index} <- cases,
+          body <- [nil, %{"a" => 1}, "text", "", <<255, 0>>],
+          build <- [&response_with/2, &request_with/2] do
+        i = build.(%{"Content-Type" => value}, body: body)
+
+        assert {:error, %PactEx.Error{code: -101, function: @entry, message: message}} =
+                 Apply.validate(i),
+               "#{inspect(value)} with body #{inspect(body)}"
+
+        assert message =~ ~s("probe")
+        assert message =~ ~s("Content-Type")
+        assert message =~ "empty or only whitespace"
+        assert message =~ if(index, do: "element #{index} ", else: "the value")
+      end
+    end
+
+    test "an explicit content_type does not save an empty or blank value" do
+      for value <- ["", " ", ["", "text/plain"]] do
+        i = response_with(%{"Content-Type" => value}, content_type: "text/plain", body: "x")
+        assert {:error, %PactEx.Error{code: -101}} = Apply.validate(i), inspect(value)
+      end
+    end
+
+    test "an empty or blank explicit content_type is not an error, the header decides" do
+      i = response_with(%{"Content-Type" => "text/plain"}, content_type: "", body: "x")
+      assert :ok = Apply.validate(i)
+    end
+
+    test "a value with a non-whitespace character is accepted" do
+      for value <- ["x", " x ", %{"value" => " x "}, ["a", "b"], %{"value" => ["a", "b"]}] do
+        assert :ok = Apply.validate(response_with(%{"Content-Type" => value})), inspect(value)
+      end
+    end
+
     test "an explicit content_type does not save a list with an empty element" do
       i =
         response_with(%{"Content-Type" => [@empty, "text/plain"]},
@@ -229,10 +361,9 @@ defmodule PactEx.Consumer.ApplyTest do
         ~s({"value":["application/json"]}),
         ~s({"value":"a","value":["b"]}),
         "[]",
-        "",
         "not json {",
-        # An empty list of calls writes no header at all.
-        [],
+        ~s({"value":" x "}),
+        ~s({"value":["a", [], "b"]}),
         [%{"value" => ["a"]}, "text/plain", %{"value" => ["b", "c"]}],
         # A number or a boolean is stringified.
         1,

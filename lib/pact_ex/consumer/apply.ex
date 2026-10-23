@@ -29,7 +29,9 @@ defmodule PactEx.Consumer.Apply do
   #     Two headers that differ only in case are rejected;
   #   * a Content-Type header that pact_ffi would store as an empty list is
   #     rejected (see `check_content_type_header/3`): pact_ffi indexes its
-  #     first element and aborts the VM when it is missing;
+  #     first element and aborts the VM when it is missing. An empty or
+  #     whitespace-only element is rejected too, and so is a `[]` value for any
+  #     header or query parameter (it would write nothing);
   #   * with an XML or form type, a body that pact_ffi reads as a description
   #     is checked by `PactEx.Consumer.BodyCheck` before any native call:
   #     pact_ffi panics (and aborts the VM) on some descriptions.
@@ -86,7 +88,8 @@ defmodule PactEx.Consumer.Apply do
   defp plan(%Interaction{description: description} = interaction) do
     response = interaction.response || %Response{status: 200}
 
-    with {:ok, request_plan} <- plan_part(:request, description, interaction.request),
+    with :ok <- check_values(interaction.request.query, "request query parameter", description),
+         {:ok, request_plan} <- plan_part(:request, description, interaction.request),
          {:ok, response_plan} <- plan_part(:response, description, response) do
       {:ok, request_plan, response_plan}
     end
@@ -94,6 +97,7 @@ defmodule PactEx.Consumer.Apply do
 
   defp plan_part(part, description, %{body: body} = struct) do
     with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
+         :ok <- check_values(headers, "#{part} header", description),
          :ok <- check_content_type_header(headers, part, description) do
       case body do
         nil ->
@@ -151,57 +155,110 @@ defmodule PactEx.Consumer.Apply do
   #    element at ANY position is rejected.
   defp check_content_type_header(headers, part, description) do
     with {"Content-Type", values} <- List.keyfind(headers, "Content-Type", 0),
-         {:ok, index} <- empty_element(values) do
-      {:error,
-       invalid(
-         "#{part} header \"Content-Type\" of interaction #{inspect(description)} " <>
-           "has #{element_label(values, index)} that resolves to an empty list of values. " <>
-           "A \"value\" of [] leaves the header without a content type or with an " <>
-           "empty one: pact_ffi aborts the VM when it reads a missing one, and no " <>
-           "client can match an empty one. Give every element a string value."
-       )}
+         {:ok, index, kind} <- empty_element(values) do
+      {:error, invalid(empty_message(kind, part, description, element_label(values, index)))}
     else
       _ -> :ok
     end
   end
 
-  defp element_label(values, index) when is_list(values), do: "element #{index}"
-  defp element_label(_value, _index), do: "its value"
+  defp empty_message(:list, part, description, label) do
+    "#{part} header \"Content-Type\" of interaction #{inspect(description)} " <>
+      "has #{label} that resolves to an empty list of values. " <>
+      "A \"value\" of [] leaves the header without a content type or with an " <>
+      "empty one: pact_ffi aborts the VM when it reads a missing one, and no " <>
+      "client can match an empty one. Give every element a string value."
+  end
 
-  # The index of the first element that resolves to an empty value. A header
-  # that is not a list counts as one element.
+  defp empty_message(:blank, part, description, label) do
+    "#{part} header \"Content-Type\" of interaction #{inspect(description)}: " <>
+      "#{label} is empty or only whitespace. pact_ffi records it as an empty " <>
+      "content type, and no client sends one, so the mock server would answer " <>
+      "500 to every request. Give every element a non-blank string value."
+  end
+
+  defp element_label(values, index) when is_list(values), do: "element #{index}"
+  defp element_label(_value, _index), do: "the value"
+
+  # The first element that resolves to an empty value, as `{:ok, index, kind}`.
+  # A header that is not a list counts as one element. `kind` is `:list` for an
+  # empty list of values and `:blank` for an empty or whitespace-only string.
   defp empty_element(values) when is_list(values) do
     values
     |> Enum.with_index()
     |> Enum.find_value(:none, fn {value, index} ->
-      if empty_array_value?(value), do: {:ok, index}
+      if kind = empty_kind(value), do: {:ok, index, kind}
     end)
   end
 
-  defp empty_element(value), do: if(empty_array_value?(value), do: {:ok, 0}, else: :none)
+  defp empty_element(value) do
+    if kind = empty_kind(value), do: {:ok, 0, kind}, else: :none
+  end
 
-  defp empty_array_value?(value) when is_binary(value), do: json_empty_value?(value)
+  # A string is blank when it trims to nothing, as `choose_type/3` trims it.
+  # Otherwise it can be JSON text for a matcher, which pact_ffi parses like
+  # `Native.json_text_shape/1` does (whitespace, repeated keys and the nesting
+  # limit are serde_json's). A matcher map is encoded and decoded first.
+  defp empty_kind(value) when is_binary(value) do
+    cond do
+      String.trim(value) == "" -> :blank
+      not String.valid?(value) -> nil
+      true -> json_text_kind(value)
+    end
+  end
 
-  defp empty_array_value?(value) when is_map(value) do
+  defp empty_kind(value) when is_map(value) do
     case encode_decoded(value, "Content-Type header") do
-      {:ok, json, _decoded} -> json_empty_value?(json)
-      {:error, _} -> false
+      {:ok, _json, decoded} -> matcher_kind(decoded)
+      {:error, _} -> nil
     end
   end
 
-  defp empty_array_value?(_scalar), do: false
+  defp empty_kind(_scalar), do: nil
 
-  # serde_json parses the text like pact_ffi (`Native.json_text_shape/1`), so
-  # whitespace, repeated keys and the nesting limit are the ones it applies.
-  defp json_empty_value?(text) do
-    with true <- String.valid?(text),
-         {:object, rendered} <- Native.json_text_shape(text),
-         {:ok, %{"value" => []}} <- BodyCheck.decode(rendered) do
-      true
+  defp json_text_kind(text) do
+    with {:object, rendered} <- Native.json_text_shape(text),
+         {:ok, decoded} <- BodyCheck.decode(rendered) do
+      matcher_kind(decoded)
     else
-      _ -> false
+      _ -> nil
     end
   end
+
+  # What a decoded `{"value": ...}` object stores: no value at all (`[]`), or a
+  # blank string, alone or inside the array of values.
+  defp matcher_kind(%{"value" => []}), do: :list
+  defp matcher_kind(%{"value" => value}) when is_binary(value), do: blank_kind(value)
+
+  defp matcher_kind(%{"value" => values}) when is_list(values),
+    do: if(Enum.any?(values, &(is_binary(&1) and blank?(&1))), do: :blank)
+
+  defp matcher_kind(_other), do: nil
+
+  defp blank_kind(value), do: if(blank?(value), do: :blank)
+  defp blank?(value), do: String.trim(value) == ""
+
+  # A `[]` value for a header or query parameter writes no native call, so the
+  # parameter would be dropped without a word. `nil` is an error too.
+  defp check_values(params, label, description) do
+    Enum.find_value(params, :ok, fn
+      {name, []} ->
+        {:error,
+         invalid(
+           "#{label} #{inspect(display_name(name))} of interaction #{inspect(description)} " <>
+             "is an empty list of values, so it would be dropped without a word. " <>
+             "Give it at least one value, or leave it out."
+         )}
+
+      _other ->
+        nil
+    end)
+  end
+
+  defp display_name(name) when is_atom(name) and name not in [nil, true, false],
+    do: Atom.to_string(name)
+
+  defp display_name(name), do: name
 
   defp plan_binary(part, description, struct, headers, body) do
     if String.valid?(body) and not String.contains?(body, <<0>>) do

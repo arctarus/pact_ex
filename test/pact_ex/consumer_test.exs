@@ -1150,6 +1150,173 @@ defmodule PactEx.ConsumerTest do
     end
   end
 
+  describe "run/4 empty Content-Type values and empty lists of values" do
+    # pact_ffi records an empty or blank Content-Type as an empty string, which
+    # no client sends: the mock server answers 500 for every request. A `[]`
+    # value for a header or query parameter wrote nothing and was dropped.
+    @blank_headers [
+      {"empty string", %{"Content-Type" => ""}},
+      {"blank string", %{"Content-Type" => "  "}},
+      {"empty first element", %{"Content-Type" => ["", "text/plain"]}},
+      {"empty last element", %{"Content-Type" => ["text/plain", ""]}},
+      {"matcher with an empty string", %{"Content-Type" => %{"value" => ""}}},
+      {"json text with a blank string", %{"Content-Type" => ~s({"value":" "})}},
+      {"lowercase name", %{"content-type" => ""}}
+    ]
+
+    test "an empty or blank Content-Type is rejected on request and response", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      for {hn, headers} <- @blank_headers, body <- [nil, %{"a" => 1}, "text"] do
+        request =
+          HTTP.interaction("blank content type")
+          |> HTTP.with_request(:post, "/b", headers: headers, body: body)
+          |> HTTP.will_respond_with(200)
+
+        response =
+          HTTP.interaction("blank content type")
+          |> HTTP.with_request(:get, "/b")
+          |> HTTP.will_respond_with(200, headers: headers, body: body)
+
+        assert {:error, %PactEx.Error{code: -101, function: function, message: message}} =
+                 Consumer.start_mock_server(pact, [request]),
+               "#{hn}, request, #{inspect(body)}"
+
+        assert function == "PactEx.Consumer.start_mock_server/3"
+        assert message =~ "request header"
+        assert message =~ "empty or only whitespace"
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [response]),
+               "#{hn}, response, #{inspect(body)}"
+
+        assert message =~ "response header"
+      end
+
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "run/3 with a blank Content-Type does not call the function and writes no pact", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("blank content type")
+        |> HTTP.with_request(:post, "/b", headers: %{"Content-Type" => ["", "text/plain"]})
+        |> HTTP.will_respond_with(200)
+
+      parent = self()
+
+      assert {:error, %PactEx.Error{code: -101}} =
+               Consumer.run(pact, [i], fn _ -> send(parent, :called) end)
+
+      refute_received :called
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "a request header of [] is rejected, naming the header", %{pact: pact, tmp_dir: dir} do
+      for name <- ["x-id", :x_id, "Content-Type"] do
+        i =
+          HTTP.interaction("empty request header")
+          |> HTTP.with_request(:get, "/h", headers: %{name => []})
+          |> HTTP.will_respond_with(200)
+
+        assert {:error, %PactEx.Error{code: -101, function: function, message: message}} =
+                 Consumer.start_mock_server(pact, [i]),
+               inspect(name)
+
+        assert function == "PactEx.Consumer.start_mock_server/3"
+        assert message =~ "request header"
+        assert message =~ ~s("#{name}")
+        assert message =~ "empty list"
+      end
+
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "a response header of [] is rejected, naming the header", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("empty response header")
+        |> HTTP.with_request(:get, "/h")
+        |> HTTP.will_respond_with(200, headers: %{"x-out" => []})
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "response header"
+      assert message =~ ~s("x-out")
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "a query parameter of [] is rejected, naming the parameter", %{pact: pact, tmp_dir: dir} do
+      for name <- ["tag", :tag] do
+        i =
+          HTTP.interaction("empty query")
+          |> HTTP.with_request(:get, "/q", query: %{"ok" => "1", name => []})
+          |> HTTP.will_respond_with(200)
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i]),
+               inspect(name)
+
+        assert message =~ "request query parameter"
+        assert message =~ ~s("tag")
+      end
+
+      parent = self()
+
+      i =
+        HTTP.interaction("empty query")
+        |> HTTP.with_request(:get, "/q", query: %{"tag" => []})
+        |> HTTP.will_respond_with(200)
+
+      assert {:error, %PactEx.Error{code: -101}} =
+               Consumer.run(pact, [i], fn _ -> send(parent, :called) end)
+
+      refute_received :called
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "a bad interaction after a good one stops everything before any server starts", %{
+      pact: pact
+    } do
+      bad =
+        HTTP.interaction("empty query")
+        |> HTTP.with_request(:get, "/q", query: %{"tag" => []})
+        |> HTTP.will_respond_with(200)
+
+      assert {:error, %PactEx.Error{code: -101}} =
+               Consumer.start_mock_server(pact, [simple("good", "/good"), bad])
+    end
+
+    test "non-empty lists and a non-blank Content-Type are still served and recorded", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("lists")
+        |> HTTP.with_request(:get, "/l",
+          query: %{"tag" => ["a", "b"]},
+          headers: %{"x-id" => ["1"], "Content-Type" => ["text/plain"]}
+        )
+        |> HTTP.will_respond_with(200, headers: %{"x-out" => ["a", "b"]})
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 assert %{status: 200} =
+                          Req.get!(m.url <> "/l?tag=a&tag=b",
+                            headers: [{"x-id", "1"}, {"content-type", "text/plain"}],
+                            retry: false
+                          )
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["request"]["query"] == %{"tag" => ["a", "b"]}
+      assert written["request"]["headers"]["x-id"] == ["1"]
+    end
+  end
+
   describe "run/4 invalid interactions" do
     test "an interaction without a request returns a PactEx.Error before any server starts", %{
       pact: pact,

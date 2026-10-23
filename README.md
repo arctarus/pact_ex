@@ -102,8 +102,13 @@ when `content_type:` differs. A value that pact_ffi would turn into an empty
 list returns an error: a map or a JSON string with `"value" => []` (a matcher
 too), alone or as any element of a list. As the whole header, or as the last
 element, it makes pact_ffi abort the VM. Before a later element, pact_ffi
-records an empty string (`["", "text/plain"]`) that no client can match. The
-check ignores the body and `content_type:`.
+records an empty string (`["", "text/plain"]`) that no client can match. An
+empty or whitespace-only string, as the value or as any element (also as a
+matcher's `"value"`, alone or in its array), returns an error for the same
+reason: pact_ffi records it, and the mock server would answer 500 to every
+request. The check ignores the body and `content_type:`. (An empty
+`content_type:` is not an error: it is skipped, like any value pact_ffi cannot
+parse.)
 
 **XML and form bodies.** With an XML content type (`application/xml`,
 `text/xml`, or `application/` or `text/` with a `+xml` suffix) or
@@ -170,7 +175,9 @@ PactEx.HTTP.with_request(interaction, :get, "/animals",
 )
 ```
 
-`nil` and other types return `{:error, %PactEx.Error{}}`.
+`nil` and other types return `{:error, %PactEx.Error{}}`. So does an empty list
+(`"tag" => []`), which would drop the parameter without a word. The error names
+the header or parameter.
 
 ## Matchers
 
