@@ -327,6 +327,42 @@ defmodule PactEx.ConsumerTest do
       assert written["request"]["headers"]["x-req"] == ["one", "two"]
     end
 
+    test "a regex matcher on a number and a boolean in a JSON body matches their string form",
+         %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("regex on non-strings")
+        |> HTTP.with_request(:post, "/r",
+          body: %{"n" => regex(42, "^\\d+$"), "ok" => regex(true, "^(true|false)$")}
+        )
+        |> HTTP.will_respond_with(200)
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 assert Req.post!(m.url <> "/r", json: %{"n" => 7, "ok" => false}).status == 200
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["request"]["body"]["content"] == %{"n" => 42, "ok" => true}
+      assert written["request"]["matchingRules"]["body"]["$.n"]["combine"] == "AND"
+
+      assert [%{"match" => "regex", "regex" => "^\\d+$"}] =
+               written["request"]["matchingRules"]["body"]["$.n"]["matchers"]
+
+      # A value whose string form does not match the pattern is a mismatch.
+      File.rm!(pact_path(dir))
+
+      assert {:error, %PactEx.MismatchError{}} =
+               Consumer.run(pact, [i], fn m ->
+                 Req.post!(m.url <> "/r",
+                   json: %{"n" => 7.5, "ok" => false},
+                   retry: false,
+                   http_errors: :return
+                 )
+               end)
+
+      refute File.exists?(pact_path(dir))
+    end
+
     test "atom query and header names are turned into strings", %{pact: pact, tmp_dir: dir} do
       i =
         HTTP.interaction("atom names")
@@ -2163,6 +2199,24 @@ defmodule PactEx.ConsumerTest do
 
         assert message =~ "not valid JSON"
       end
+    end
+
+    test "a string body nested deeper than serde_json's limit names the limit", %{pact: pact} do
+      deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
+
+      i =
+        HTTP.interaction("too deep")
+        |> HTTP.with_request(:get, "/f")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => "application/x-www-form-urlencoded"},
+          body: ~s({"a":#{deep}})
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "nested deeper than serde_json's limit of 128 levels"
+      refute message =~ "not valid JSON"
     end
 
     test "a string body under a form type that is not sniffed as JSON stays byte for byte", %{

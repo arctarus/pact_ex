@@ -49,6 +49,48 @@ defmodule PactEx.NativeTest do
       end
     end
 
+    # The rules the README states: the regex is anchored at the start only, and
+    # looks at a short prefix.
+    test "matches only the prefix pact_models' regex asks for" do
+      sniffed = [
+        # Unicode whitespace (a no-break space, U+2003) may come first.
+        "\u00A0{}",
+        "\u2003 [",
+        "{ }",
+        "{\n}",
+        ~s({ "a),
+        ~s({"a b":1}),
+        ~s({"\u00E9":1}),
+        "[",
+        "[ not json",
+        ~s("),
+        ~s("abc),
+        ~s("a b"),
+        "007",
+        "false"
+      ]
+
+      for text <- sniffed, do: assert(PactEx.Native.detect_json(text), inspect(text))
+
+      not_sniffed = [
+        # A BOM is not whitespace.
+        "\uFEFF{}",
+        "x{}",
+        "{",
+        "{1}",
+        ~s({"":1}),
+        ~s({"-":1}),
+        ~s({ "}),
+        "-1",
+        "x1",
+        "\u0661",
+        "True",
+        "nul"
+      ]
+
+      for text <- not_sniffed, do: refute(PactEx.Native.detect_json(text), inspect(text))
+    end
+
     test "a NUL byte is just text" do
       refute PactEx.Native.detect_json("a\0b")
       assert PactEx.Native.detect_json("{\"a\":\"x\0\"}")
@@ -76,11 +118,18 @@ defmodule PactEx.NativeTest do
       end
     end
 
-    test "returns :invalid for text serde_json cannot parse, including NUL and deep nesting" do
-      deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
-
-      for text <- ["", "1=a&2=b", "{", ~s({"a":1} x), "a\0b", ~s({"a":#{deep}})] do
+    test "returns :invalid for text serde_json cannot parse, including NUL" do
+      for text <- ["", "1=a&2=b", "{", ~s({"a":1} x), "a\0b", ~s({"a":[1,]})] do
         assert PactEx.Native.json_text_shape(text) == :invalid, inspect(text)
+      end
+    end
+
+    test "returns :too_deep for nesting beyond serde_json's limit of 128" do
+      deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
+      unclosed = ~s({"a":) <> String.duplicate("[", 200)
+
+      for text <- [~s({"a":#{deep}}), unclosed] do
+        assert PactEx.Native.json_text_shape(text) == :too_deep, inspect(text, limit: 20)
       end
     end
 

@@ -68,6 +68,11 @@ defmodule PactEx.Consumer.BodyCheck do
           {:error,
            "the text looks like JSON to pact_ffi but is not valid JSON, " <>
              "and pact_ffi would drop it or panic"}
+
+        :too_deep ->
+          {:error,
+           "the text looks like JSON to pact_ffi but is nested deeper than " <>
+             "serde_json's limit of 128 levels, and pact_ffi would drop it or panic"}
       end
     else
       case origin do

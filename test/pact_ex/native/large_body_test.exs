@@ -55,9 +55,9 @@ defmodule PactEx.Native.LargeBodyTest do
 
     assert {:object, rendered} = Native.json_text_shape(nested.(127))
     assert byte_size(rendered) == byte_size(nested.(127))
-    assert Native.json_text_shape(nested.(128)) == :invalid
+    assert Native.json_text_shape(nested.(128)) == :too_deep
     assert Native.detect_json(nested.(10_000))
-    assert Native.json_text_shape(nested.(10_000)) == :invalid
+    assert Native.json_text_shape(nested.(10_000)) == :too_deep
   end
 
   test "the fixtures are multi-megabyte" do

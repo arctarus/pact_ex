@@ -444,12 +444,31 @@ defmodule PactEx.Consumer.BodyCheckTest do
 
     test "nesting beyond serde_json's limit is an error, not a panic" do
       deep = String.duplicate("[", 200) <> String.duplicate("]", 200)
-      assert_invalid(BodyCheck.check(:form, ~s({"a":#{deep}}), :text), "not valid JSON")
+
+      assert_invalid(
+        BodyCheck.check(:form, ~s({"a":#{deep}}), :text),
+        "serde_json's limit of 128"
+      )
 
       assert_invalid(
         BodyCheck.check(:xml, ~s({"root":{"name":"r"},"x":#{deep}}), :text),
-        "not valid JSON"
+        "serde_json's limit of 128"
       )
+    end
+
+    test "nesting of exactly 128 levels gets the nesting message, not the syntax one" do
+      # The object is level 1, so 127 brackets inside it make 128.
+      text = ~s({"a":) <> String.duplicate("[", 127) <> String.duplicate("]", 127) <> "}"
+
+      assert {:error, message} = BodyCheck.check(:form, text, :text)
+      assert message =~ "nested deeper than serde_json's limit of 128 levels"
+      refute message =~ "not valid JSON"
+    end
+
+    test "invalid JSON keeps the syntax message" do
+      assert {:error, message} = BodyCheck.check(:form, ~s({"a":[1,]}), :text)
+      assert message =~ "is not valid JSON"
+      refute message =~ "nested deeper"
     end
 
     test "a number that serde_json cannot read as an unsigned integer is rejected in examples" do

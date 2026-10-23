@@ -11,6 +11,7 @@ mod atoms {
         json,
         other,
         invalid,
+        too_deep,
         object,
     }
 }
@@ -65,12 +66,16 @@ fn detects_json(text: &str) -> bool {
 /// `true` when pact_ffi's content sniffing takes `text` for JSON.
 ///
 /// `text` is a whole body, so this runs on a dirty CPU scheduler: pact_models
-/// logs the text with `debug!`, uppercases a copy of it and runs four regular
-/// expressions over it, which takes tens of milliseconds for a few MB. There
-/// is no deep recursion to guard against: the `regex` crate matches in linear
-/// time without recursion, and nothing here walks a nested structure, so the
-/// scheduler thread's own stack is enough (no `on_large_stack`). It makes no
-/// `pactffi_*` call, so the clear_error and same-thread rules do not apply.
+/// uppercases a copy of it and runs four regular expressions over it, which
+/// takes tens of milliseconds for a few MB. It also logs the whole text with
+/// `debug!`, which formats and writes the body once more. That cost applies
+/// only when a debug-level tracing subscriber is installed
+/// (`PactEx.Log.init(level: :debug)`); without one, `debug!` formats nothing.
+/// There is no deep recursion to guard against: the `regex` crate matches in
+/// linear time without recursion, and nothing here walks a nested structure,
+/// so the scheduler thread's own stack is enough (no `on_large_stack`). It
+/// makes no `pactffi_*` call, so the clear_error and same-thread rules do not
+/// apply.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn detect_json(text: String) -> bool {
     detects_json(&text)
@@ -82,6 +87,8 @@ enum Shape {
     Object(String),
     Other,
     Invalid,
+    /// Valid so far, but nested deeper than serde_json's limit of 128.
+    TooDeep,
 }
 
 /// Parses `text` with serde_json, the parser behind `process_xml` and
@@ -92,20 +99,24 @@ fn json_shape(text: &str) -> Shape {
     match serde_json::from_str::<Value>(text) {
         Ok(value @ Value::Object(_)) => Shape::Object(value.to_string()),
         Ok(_) => Shape::Other,
+        // `Error::classify` calls this a syntax error, like any other, so the
+        // message is the only thing that tells the two apart.
+        Err(err) if err.to_string().starts_with("recursion limit exceeded") => Shape::TooDeep,
         Err(_) => Shape::Invalid,
     }
 }
 
 /// Returns `{:object, rendered}` when serde_json parses `text` to a JSON
-/// object, `:other` for any other JSON value, and `:invalid` when it does not
-/// parse.
+/// object, `:other` for any other JSON value, `:too_deep` when the parse stops
+/// at serde_json's nesting limit of 128, and `:invalid` when it does not parse
+/// for any other reason.
 ///
 /// `text` is a whole body, and the parse plus the rendering take over 100 ms
 /// for 4 MB, so this runs on a dirty CPU scheduler. The parse, the rendering
 /// and the drop of the `Value` recurse once per nesting level, but serde_json
 /// stops the parse at a depth of 128, so the stack they use is bounded and
 /// small (kilobytes), and the scheduler thread's own stack is enough (no
-/// `on_large_stack`). Deeper input is `:invalid`, never a stack overflow. It
+/// `on_large_stack`). Deeper input is `:too_deep`, never a stack overflow. It
 /// makes no `pactffi_*` call, so the clear_error and same-thread rules do not
 /// apply.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -114,6 +125,7 @@ fn json_text_shape<'a>(env: Env<'a>, text: String) -> Term<'a> {
         Shape::Object(rendered) => (atoms::object(), rendered).encode(env),
         Shape::Other => atoms::other().encode(env),
         Shape::Invalid => atoms::invalid().encode(env),
+        Shape::TooDeep => atoms::too_deep().encode(env),
     }
 }
 
@@ -227,9 +239,21 @@ mod tests {
         for text in ["1=a&2=b", "{\"a", "", "{} x", "{\"a\":01}", "[1,]"] {
             assert_eq!(json_shape(text), Shape::Invalid, "{text:?}");
         }
-        // serde_json stops at a recursion limit of 128.
-        let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
-        assert_eq!(json_shape(&format!(r#"{{"a":{deep}}}"#)), Shape::Invalid);
+        // serde_json stops at a recursion limit of 128: the object is level 1.
+        let nested = |levels: usize| {
+            format!(
+                r#"{{"a":{}{}}}"#,
+                "[".repeat(levels - 1),
+                "]".repeat(levels - 1)
+            )
+        };
+        assert!(matches!(json_shape(&nested(127)), Shape::Object(_)));
+        assert_eq!(json_shape(&nested(128)), Shape::TooDeep);
+        assert_eq!(json_shape(&nested(200)), Shape::TooDeep);
+        // Too deep is only the depth. A syntax error before the limit is not.
+        assert_eq!(json_shape(r#"{"a":[1,]}"#), Shape::Invalid);
+        let deep_and_broken = format!(r#"{{"a":{}"#, "[".repeat(200));
+        assert_eq!(json_shape(&deep_and_broken), Shape::TooDeep);
     }
 
     #[test]
