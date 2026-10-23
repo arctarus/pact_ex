@@ -118,48 +118,67 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
-  # A Content-Type header that ends up as an empty list in pact_ffi.
+  # A Content-Type header that pact_ffi cannot use, for two reasons.
   #
   # `pactffi_with_header_v2` passes each header string through serde_json
   # (`from_integration_json_v2`). A JSON object whose "value" is `[]`, with or
   # without "pact:matcher:type", becomes `Either::Right([])`, and
-  # `set_header` stores that list: the header is `[]`. A plain string, a
-  # number, an object without "value" or with a non-array "value" always gives
-  # at least one value (`parse_header` never returns an empty list). Matchers
-  # in an array keep its length (`process_array`).
+  # `set_header` stores that list. A plain string, a number, an object without
+  # "value" or with a non-array "value" always gives at least one value
+  # (`parse_header` never returns an empty list). Matchers in an array keep
+  # its length (`process_array`).
   #
-  # With a list, element `i` is a separate call with index `i`. A `Right`
-  # replaces the whole header, whatever the index. A later element with index
-  # above 0 resizes the list to `i + 1` entries, so only the LAST element
-  # decides: `[%{"value" => []}, "a/b"]` ends as `["", "a/b"]`, while
-  # `["a/b", %{"value" => []}]` ends as `[]`. `[]` as a whole writes nothing.
+  # 1. An empty Vec aborts. With a list, element `i` is a separate call with
+  #    index `i`. A `Right` replaces the whole header, whatever the index, and
+  #    a later element with index above 0 resizes the list to `i + 1` entries.
+  #    So when the LAST element is empty the header ends as `[]`:
+  #    `["a/b", %{"value" => []}]` is `[]`. (`[]` as a whole writes nothing.)
+  #    `pactffi_with_body` evaluates `content_type()` on the part before it
+  #    reads the content type PactEx passes, and pact_models indexes `v[0]` of
+  #    the Content-Type header, so an empty list panics inside `extern "C"`
+  #    and aborts the VM. That happens for a text body (map, list, string)
+  #    even with an explicit `:content_type`. It does not happen for a binary
+  #    body or no body (the mock server serves it and the pact file records
+  #    `"Content-Type": []`), but the header is still rejected: it is
+  #    meaningless, and other pact_models code that reads the content type of
+  #    the recorded part may hit the same `v[0]`.
   #
-  # `pactffi_with_body` evaluates `content_type()` on the part before it reads
-  # the content type PactEx passes, and pact_models indexes `v[0]` of the
-  # Content-Type header, so an empty list panics inside `extern "C"` and
-  # aborts the VM. That happens for a text body (map, list, string) even with
-  # an explicit `:content_type`. It does not happen for a binary body or no
-  # body (the mock server serves it and the pact file records
-  # `"Content-Type": []`), but the header is still rejected: it is
-  # meaningless, and any pact_models code that reads the content type of the
-  # recorded part hits the same `v[0]`.
+  # 2. An empty element makes the contract unmatchable. When an empty element
+  #    is not last, the list keeps its length and the element is stored as an
+  #    empty string: `[%{"value" => []}, "text/plain"]` is `["", "text/plain"]`.
+  #    That does not abort, but no real client sends such a header, so the
+  #    mock server answers 500 and `run` returns a `MismatchError`. So an empty
+  #    element at ANY position is rejected.
   defp check_content_type_header(headers, part, description) do
     with {"Content-Type", values} <- List.keyfind(headers, "Content-Type", 0),
-         true <- values |> last_value() |> empty_array_value?() do
+         {:ok, index} <- empty_element(values) do
       {:error,
        invalid(
          "#{part} header \"Content-Type\" of interaction #{inspect(description)} " <>
-           "resolves to an empty list of values. A \"value\" of [] leaves the " <>
-           "header without a content type, and pact_ffi aborts the VM when " <>
-           "it reads one. Give the header a string value."
+           "has #{element_label(values, index)} that resolves to an empty list of values. " <>
+           "A \"value\" of [] leaves the header without a content type or with an " <>
+           "empty one: pact_ffi aborts the VM when it reads a missing one, and no " <>
+           "client can match an empty one. Give every element a string value."
        )}
     else
       _ -> :ok
     end
   end
 
-  defp last_value(values) when is_list(values), do: List.last(values)
-  defp last_value(value), do: value
+  defp element_label(values, index) when is_list(values), do: "element #{index}"
+  defp element_label(_value, _index), do: "its value"
+
+  # The index of the first element that resolves to an empty value. A header
+  # that is not a list counts as one element.
+  defp empty_element(values) when is_list(values) do
+    values
+    |> Enum.with_index()
+    |> Enum.find_value(:none, fn {value, index} ->
+      if empty_array_value?(value), do: {:ok, index}
+    end)
+  end
+
+  defp empty_element(value), do: if(empty_array_value?(value), do: {:ok, 0}, else: :none)
 
   defp empty_array_value?(value) when is_binary(value), do: json_empty_value?(value)
 

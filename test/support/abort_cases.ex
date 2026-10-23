@@ -269,30 +269,36 @@ defmodule PactEx.AbortCases do
 
   # A Content-Type header that pact_ffi stores as an empty list makes
   # `pactffi_with_body` panic (pact_models indexes `v[0]`). All of these are
-  # rejected, with or without a body. Only the LAST element of a list decides,
-  # and anything that keeps at least one value is served.
+  # rejected, with or without a body. A list with an empty element at any
+  # position is rejected too: pact_ffi records `["", "text/plain"]`, which no
+  # client can match. Anything that keeps a non-empty value everywhere is served.
   defp empty_content_type do
     empty = %{"value" => []}
     matcher = %{"pact:matcher:type" => "type", "value" => []}
     regex = %{"pact:matcher:type" => "regex", "regex" => ".*", "value" => []}
-    json = fn name -> %{"Content-Type" => name} end
+    ct_header = fn name -> %{"Content-Type" => name} end
     map_body = %{"a" => 1}
 
     rejected_headers = [
-      {"value", json.(empty)},
-      {"matcher", json.(matcher)},
-      {"regex matcher", json.(regex)},
-      {"atom keys", json.(%{value: []})},
-      {"atom key matcher", json.(%{:"pact:matcher:type" => "type", :value => []})},
-      {"json text", json.(~s({"value":[]}))},
-      {"json text, spaced", json.(~s(  {"value" :  [ ] }\n))},
-      {"json text, matcher", json.(~s({"pact:matcher:type":"type","value":[]}))},
-      {"json text, repeated key", json.(~s({"value":"a","value":[]}))},
-      {"list of one", json.([empty])},
-      {"list, last element", json.(["text/plain", empty])},
-      {"list, empty twice", json.([empty, empty])},
-      {"list, after a non-empty value", json.([%{"value" => ["a"]}, empty])},
-      {"list of json texts", json.([~s({"value":[]})])},
+      {"value", ct_header.(empty)},
+      {"matcher", ct_header.(matcher)},
+      {"regex matcher", ct_header.(regex)},
+      {"atom keys", ct_header.(%{value: []})},
+      {"atom key matcher", ct_header.(%{:"pact:matcher:type" => "type", :value => []})},
+      {"json text", ct_header.(~s({"value":[]}))},
+      {"json text, spaced", ct_header.(~s(  {"value" :  [ ] }\n))},
+      {"json text, matcher", ct_header.(~s({"pact:matcher:type":"type","value":[]}))},
+      {"json text, repeated key", ct_header.(~s({"value":"a","value":[]}))},
+      {"list of one", ct_header.([empty])},
+      {"list, last element", ct_header.(["text/plain", empty])},
+      {"list, empty twice", ct_header.([empty, empty])},
+      {"list, after a non-empty value", ct_header.([%{"value" => ["a"]}, empty])},
+      {"list, empty first element, then a value", ct_header.([empty, "text/plain"])},
+      {"list, empty matcher first, then an array",
+       ct_header.([matcher, %{"value" => ["a/b", "c/d"]}])},
+      {"list, empty in the middle", ct_header.(["text/csv", empty, "text/plain"])},
+      {"list, empty first, then empty twice", ct_header.([empty, empty, "text/plain"])},
+      {"list of json texts", ct_header.([~s({"value":[]})])},
       {"lowercase name", %{"content-type" => empty}},
       {"atom name", %{"Content-Type": empty}},
       {"lowercase atom name", %{"content-type": empty}}
@@ -326,35 +332,47 @@ defmodule PactEx.AbortCases do
         )
       end
 
+    request_bodies = [
+      {"map body", map_body, []},
+      {"string body", "hello", []},
+      {"empty string body", "", []},
+      {"no body", nil, []},
+      {"explicit json type and map body", map_body, [content_type: "application/json"]},
+      {"explicit text type and string body", "hello", [content_type: "text/plain"]},
+      {"explicit text type and empty string body", "", [content_type: "text/plain"]}
+    ]
+
     request =
-      for {bn, body} <- [{"map body", map_body}, {"string body", "hello"}, {"no body", nil}] do
+      for {hn, headers} <- [
+            {"value", ct_header.(empty)},
+            {"list, empty first", ct_header.([empty, "text/plain"])}
+          ],
+          {bn, body, bopts} <- request_bodies do
         %{
-          name: "empty Content-Type: request side, #{bn}",
+          name: "empty Content-Type: request side, #{hn}, #{bn}",
           expect: :invalid,
           build: fn ->
             HTTP.interaction("abort case")
-            |> HTTP.with_request(:post, "/x", headers: json.(empty), body: body)
+            |> HTTP.with_request(:post, "/x", [headers: headers, body: body] ++ bopts)
           end
         }
       end
 
     accepted_headers = [
-      {"non-empty array value", json.(%{"value" => ["application/json"]})},
+      {"non-empty array value", ct_header.(%{"value" => ["application/json"]})},
       {"matcher with a string value",
-       json.(%{"pact:matcher:type" => "type", "value" => "text/plain"})},
+       ct_header.(%{"pact:matcher:type" => "type", "value" => "text/plain"})},
       {"matcher with a non-empty array",
-       json.(%{"pact:matcher:type" => "type", "value" => ["a/b"]})},
-      {"array of an empty array", json.(%{"value" => [[]]})},
-      {"null value", json.(%{"value" => nil})},
-      {"matcher without a value", json.(%{"pact:matcher:type" => "type"})},
-      {"object without a value", json.(%{"other" => []})},
-      {"json text, non-empty", json.(~s({"value":["application/json"]}))},
-      {"json text, not an object", json.("[]")},
-      {"empty string", json.("")},
-      {"whole header is an empty list", json.([])},
-      {"empty first element, then a value", json.([empty, "text/plain"])},
-      {"empty matcher first, then an array", json.([matcher, %{"value" => ["a/b", "c/d"]}])},
-      {"list of strings", json.(["application/json", "extra"])},
+       ct_header.(%{"pact:matcher:type" => "type", "value" => ["a/b"]})},
+      {"array of an empty array", ct_header.(%{"value" => [[]]})},
+      {"null value", ct_header.(%{"value" => nil})},
+      {"matcher without a value", ct_header.(%{"pact:matcher:type" => "type"})},
+      {"object without a value", ct_header.(%{"other" => []})},
+      {"json text, non-empty", ct_header.(~s({"value":["application/json"]}))},
+      {"json text, not an object", ct_header.("[]")},
+      {"empty string", ct_header.("")},
+      {"whole header is an empty list", ct_header.([])},
+      {"list of strings", ct_header.(["application/json", "extra"])},
       {"another header with an empty array", %{"X-Other" => empty}}
     ]
 

@@ -163,6 +163,44 @@ defmodule PactEx.Consumer.ApplyTest do
       end
     end
 
+    test "rejects an empty element at any position of a list, and names its index" do
+      matcher = %{"pact:matcher:type" => "type", "value" => []}
+
+      cases = [
+        {[@empty, "text/plain"], 0},
+        {[matcher, %{"value" => ["a/b", "c/d"]}], 0},
+        {["text/plain", @empty, "text/csv"], 1},
+        {["text/plain", "text/csv", @empty], 2},
+        {[~s({"value":[]}), "text/plain"], 0},
+        {[@empty, @empty, "text/plain"], 0},
+        {["a/b", %{"value" => ["c/d"]}, matcher, "e/f"], 2}
+      ]
+
+      for {value, index} <- cases,
+          body <- [nil, %{"a" => 1}, "text", <<255, 0>>],
+          build <- [&response_with/2, &request_with/2] do
+        i = build.(%{"Content-Type" => value}, body: body)
+
+        assert {:error, %PactEx.Error{code: -101, function: @entry, message: message}} =
+                 Apply.validate(i),
+               "#{inspect(value)} with body #{inspect(body)}"
+
+        assert message =~ ~s("probe")
+        assert message =~ ~s("Content-Type")
+        assert message =~ "element #{index} "
+      end
+    end
+
+    test "an explicit content_type does not save a list with an empty element" do
+      i =
+        response_with(%{"Content-Type" => [@empty, "text/plain"]},
+          content_type: "text/plain",
+          body: "x"
+        )
+
+      assert {:error, %PactEx.Error{code: -101}} = Apply.validate(i)
+    end
+
     test "the message names the part" do
       assert {:error, %{message: "response header" <> _}} =
                Apply.validate(response_with(%{"Content-Type" => @empty}))
@@ -195,10 +233,7 @@ defmodule PactEx.Consumer.ApplyTest do
         "not json {",
         # An empty list of calls writes no header at all.
         [],
-        # A later element with index above 0 refills the list.
-        [@empty, "text/plain"],
-        [%{"pact:matcher:type" => "type", "value" => []}, %{"value" => ["a/b", "c/d"]}],
-        [@empty, @empty, "text/plain"],
+        [%{"value" => ["a"]}, "text/plain", %{"value" => ["b", "c"]}],
         # A number or a boolean is stringified.
         1,
         true

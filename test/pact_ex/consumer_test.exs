@@ -959,6 +959,8 @@ defmodule PactEx.ConsumerTest do
       {"json text", %{"Content-Type" => ~s({"value":[]})}},
       {"list form", %{"Content-Type" => [@empty_value]}},
       {"last of a list", %{"Content-Type" => ["text/plain", @empty_value]}},
+      {"first of a list", %{"Content-Type" => [@empty_value, "text/plain"]}},
+      {"middle of a list", %{"Content-Type" => ["text/csv", @empty_value, "text/plain"]}},
       {"lowercase name", %{"content-type" => @empty_value}},
       {"atom name", %{"Content-Type": @empty_value}}
     ]
@@ -1009,6 +1011,32 @@ defmodule PactEx.ConsumerTest do
       end
 
       refute File.exists?(pact_path(dir))
+    end
+
+    test "an empty element before a value is rejected on request and response", %{pact: pact} do
+      headers = %{"Content-Type" => [@empty_value, "text/plain"]}
+
+      request_side =
+        HTTP.interaction("partly empty request")
+        |> HTTP.with_request(:post, "/p", headers: headers, body: "x")
+        |> HTTP.will_respond_with(200)
+
+      response_side =
+        HTTP.interaction("partly empty response")
+        |> HTTP.with_request(:get, "/p")
+        |> HTTP.will_respond_with(200, headers: headers, body: "x")
+
+      assert {:error, %PactEx.Error{code: -101, message: request_message}} =
+               Consumer.start_mock_server(pact, [request_side])
+
+      assert request_message =~ "request header"
+      assert request_message =~ "element 0"
+
+      assert {:error, %PactEx.Error{code: -101, message: response_message}} =
+               Consumer.start_mock_server(pact, [response_side])
+
+      assert response_message =~ "response header"
+      assert response_message =~ "element 0"
     end
 
     test "run/3 returns the error without calling the function and writes no pact", %{
