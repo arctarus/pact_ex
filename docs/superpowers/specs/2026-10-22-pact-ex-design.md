@@ -50,7 +50,7 @@ Sources: `pact-reference` (master, `pact_ffi` 0.5.12), `pact_erlang` 0.3.2, `pac
 | Native layer | Rustler NIF crate `native/pact_ex_nif` that depends on `pact_ffi = "=0.5.12"` and `pact_models = "=1.3.17"` from crates.io |
 | Distribution | `rustler_precompiled`. NIFs are built in GitHub Actions for 6 targets and NIF versions 2.16 and 2.17 |
 | Platforms | `x86_64`/`aarch64` × `linux-gnu`/`linux-musl`/`apple-darwin`. No Windows |
-| Floors | Elixir `~> 1.18` (built-in `JSON` module), OTP 26+, Rust 1.88+ |
+| Floors | Elixir `~> 1.18` (built-in `JSON` module), OTP 26+, Rust 1.91+ (rustler 0.38 `rust-version`) |
 | Handles | `PactHandle` and `InteractionHandle` are wrapped in Rustler resources. Freeing happens on GC (`Drop` calls `pactffi_free_pact_handle`). An interaction resource holds the pact resource alive |
 | Blocking calls | `schedule = "DirtyIo"`, and the body runs on a spawned 8 MiB-stack thread that also reads the last error |
 | Errors | NIFs return `:ok` / `{:ok, v}` / `{:error, %{function: String.t(), code: integer(), message: String.t()}}`. Elixir raises `PactEx.Error` only in `!` functions |

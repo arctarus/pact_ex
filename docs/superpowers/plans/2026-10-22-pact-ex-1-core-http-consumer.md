@@ -6,7 +6,7 @@
 
 **Architecture:** A Rustler crate (`native/pact_ex_nif`) depends on the `pact_ffi` crate and exposes thin NIFs over its handles. `PactHandle` and `InteractionHandle` are wrapped in Rustler resources. The Elixir side is pure data until `PactEx.Consumer.start_mock_server/3`, which creates a fresh FFI pact, applies the interactions and starts the mock server. There is no GenServer and no shared mutable state between tests.
 
-**Tech Stack:** Elixir ~> 1.18 (built-in `JSON`), OTP 26+, Rust 1.88+, `rustler` 0.38 (crate and Hex), `rustler_precompiled` ~> 0.10, `pact_ffi` =0.5.12, `req` (test only).
+**Tech Stack:** Elixir ~> 1.18 (built-in `JSON`), OTP 26+, Rust 1.91+ (rustler 0.38 `rust-version`), `rustler` 0.38 (crate and Hex), `rustler_precompiled` ~> 0.10, `pact_ffi` =0.5.12, `req` (test only).
 
 **Spec:** `docs/superpowers/specs/2026-10-22-pact-ex-design.md`
 
@@ -966,7 +966,7 @@ git commit -m "test: port pact_erlang HTTP acceptance suite and add concurrent w
 
 - [ ] **Step 5: Write `README.md`**
 
-Sections: install, quick start (the spec's API sketch), matchers table, logging, building from source (`PACT_EX_BUILD=1`, Rust 1.88+), supported platforms, and the pact_erlang parity table from the spec. List messages, plugins and the verifier as "coming in plans 2–3".
+Sections: install, quick start (the spec's API sketch), matchers table, logging, building from source (`PACT_EX_BUILD=1`, Rust 1.91+ (rustler 0.38 `rust-version`)), supported platforms, and the pact_erlang parity table from the spec. List messages, plugins and the verifier as "coming in plans 2–3".
 
 - [ ] **Step 6: Verify packaging**
 
