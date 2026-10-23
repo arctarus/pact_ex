@@ -20,6 +20,7 @@ defmodule PactEx.Consumer.BodyCheckTest do
             "application/xml",
             "text/xml",
             "application/atom+xml",
+            "text/foo+xml",
             "application/soap+xml; charset=utf-8",
             "Application/XML",
             "TEXT/XML; charset=UTF-8",

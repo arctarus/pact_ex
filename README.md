@@ -97,7 +97,8 @@ or a list (its first element is used). The header is sent as you wrote it, even
 when `content_type:` differs.
 
 **XML and form bodies.** With an XML content type (`application/xml`,
-`text/xml` or `application/...+xml`) or `application/x-www-form-urlencoded`, a map or list
+`text/xml`, or `application/` or `text/` with a `+xml` suffix) or
+`application/x-www-form-urlencoded`, a map or list
 is not JSON. It is a description of the body in pact_ffi's format. PactEx checks
 the description before it calls pact_ffi, because some shapes make pact_ffi
 panic, which would abort the VM. A bad description returns

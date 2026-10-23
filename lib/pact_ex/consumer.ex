@@ -35,7 +35,8 @@ defmodule PactEx.Consumer do
       string that is valid UTF-8 without NUL bytes, and
       `application/octet-stream` for any other binary.
     * A map or list body is sent as JSON, except with an XML content type
-      (`application/xml`, `text/xml`, `application/...+xml`) or
+      (`application/xml`, `text/xml`, or `application/` or `text/` with a `+xml`
+      suffix) or
       `application/x-www-form-urlencoded`. Then it is a description of the
       body in the format of pact_ffi. pact_ffi panics on some descriptions,
       which aborts the VM, so PactEx checks them first and returns
