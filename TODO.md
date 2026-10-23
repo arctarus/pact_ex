@@ -29,6 +29,8 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: tests
 
+- [ ] Abort matrix: assert `length(expected) == length(headers)` per row (`Enum.zip` silently truncates); fix the comment reason at `abort_cases.ex` ~190 (Mime doesn't parse the JSON-text header at all).
+- [ ] `large_body_test.exs`: restore microstate accounting in `on_exit`; the `dirty > 0` assertion could false-pass on an unrelated dirty GC.
 - [ ] No test for the non-UTF-8 candidate branch in `Apply.classify/1`.
 - [ ] No collision test for a query matcher map.
 - [ ] `with_body` and `with_binary_body` are only tested natively with `:response`.
@@ -51,6 +53,9 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Before the first release
 
+- [ ] release.yml hardening: run `readelf` outside the `|| true` so a readelf failure fails the step; add `startsWith(github.ref, 'refs/tags/v')` to `publish`'s `if:`; add a `concurrency` group for PR dry runs; consider adding `lib/pact_ex/native.ex` to the `pull_request` paths. Note the x86_64 glibc limit can't trip on ubuntu-22.04 (guard only).
+- [ ] RELEASING.md: dry run skips the tag-vs-`@version` check; replace the stale `objdump -T` mention with `readelf -W --dyn-syms`; document recovery when one build leg fails on a tag push (re-run failed jobs).
+- [ ] `content_type.rs` ~68: the `debug!` cost only applies when a debug subscriber is installed.
 - [ ] Confirm the source URL `https://github.com/arctarus/pact_ex` in `mix.exs` and `lib/pact_ex/native.ex`.
 - [ ] Dry-run `release.yml`, e.g. with `workflow_dispatch` or a test tag.
 
