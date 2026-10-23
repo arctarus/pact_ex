@@ -27,6 +27,9 @@ defmodule PactEx.Consumer.Apply do
   #     pact_ffi adds the body's content type under that exact-case key, and
   #     a lowercase header would give the part two Content-Type entries.
   #     Two headers that differ only in case are rejected;
+  #   * a Content-Type header that pact_ffi would store as an empty list is
+  #     rejected (see `check_content_type_header/3`): pact_ffi indexes its
+  #     first element and aborts the VM when it is missing;
   #   * with an XML or form type, a body that pact_ffi reads as a description
   #     is checked by `PactEx.Consumer.BodyCheck` before any native call:
   #     pact_ffi panics (and aborts the VM) on some descriptions.
@@ -90,7 +93,8 @@ defmodule PactEx.Consumer.Apply do
   end
 
   defp plan_part(part, description, %{body: body} = struct) do
-    with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header") do
+    with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
+         :ok <- check_content_type_header(headers, part, description) do
       case body do
         nil ->
           {:ok, %{headers: headers, body: nil}}
@@ -111,6 +115,72 @@ defmodule PactEx.Consumer.Apply do
           {:error,
            invalid("unsupported #{part} body: #{inspect(other)}, expected a binary, map or list")}
       end
+    end
+  end
+
+  # A Content-Type header that ends up as an empty list in pact_ffi.
+  #
+  # `pactffi_with_header_v2` passes each header string through serde_json
+  # (`from_integration_json_v2`). A JSON object whose "value" is `[]`, with or
+  # without "pact:matcher:type", becomes `Either::Right([])`, and
+  # `set_header` stores that list: the header is `[]`. A plain string, a
+  # number, an object without "value" or with a non-array "value" always gives
+  # at least one value (`parse_header` never returns an empty list). Matchers
+  # in an array keep its length (`process_array`).
+  #
+  # With a list, element `i` is a separate call with index `i`. A `Right`
+  # replaces the whole header, whatever the index. A later element with index
+  # above 0 resizes the list to `i + 1` entries, so only the LAST element
+  # decides: `[%{"value" => []}, "a/b"]` ends as `["", "a/b"]`, while
+  # `["a/b", %{"value" => []}]` ends as `[]`. `[]` as a whole writes nothing.
+  #
+  # `pactffi_with_body` evaluates `content_type()` on the part before it reads
+  # the content type PactEx passes, and pact_models indexes `v[0]` of the
+  # Content-Type header, so an empty list panics inside `extern "C"` and
+  # aborts the VM. That happens for a text body (map, list, string) even with
+  # an explicit `:content_type`. It does not happen for a binary body or no
+  # body (the mock server serves it and the pact file records
+  # `"Content-Type": []`), but the header is still rejected: it is
+  # meaningless, and any pact_models code that reads the content type of the
+  # recorded part hits the same `v[0]`.
+  defp check_content_type_header(headers, part, description) do
+    with {"Content-Type", values} <- List.keyfind(headers, "Content-Type", 0),
+         true <- values |> last_value() |> empty_array_value?() do
+      {:error,
+       invalid(
+         "#{part} header \"Content-Type\" of interaction #{inspect(description)} " <>
+           "resolves to an empty list of values. A \"value\" of [] leaves the " <>
+           "header without a content type, and pact_ffi aborts the VM when " <>
+           "it reads one. Give the header a string value."
+       )}
+    else
+      _ -> :ok
+    end
+  end
+
+  defp last_value(values) when is_list(values), do: List.last(values)
+  defp last_value(value), do: value
+
+  defp empty_array_value?(value) when is_binary(value), do: json_empty_value?(value)
+
+  defp empty_array_value?(value) when is_map(value) do
+    case encode_decoded(value, "Content-Type header") do
+      {:ok, json, _decoded} -> json_empty_value?(json)
+      {:error, _} -> false
+    end
+  end
+
+  defp empty_array_value?(_scalar), do: false
+
+  # serde_json parses the text like pact_ffi (`Native.json_text_shape/1`), so
+  # whitespace, repeated keys and the nesting limit are the ones it applies.
+  defp json_empty_value?(text) do
+    with true <- String.valid?(text),
+         {:object, rendered} <- Native.json_text_shape(text),
+         {:ok, %{"value" => []}} <- BodyCheck.decode(rendered) do
+      true
+    else
+      _ -> false
     end
   end
 

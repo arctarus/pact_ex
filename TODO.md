@@ -2,15 +2,6 @@
 
 Open issues from the plan 1 reviews. The full history is in the SDD ledger, which is git-ignored.
 
-## Critical
-
-- [ ] **A `Content-Type` header that resolves to an empty array aborts the BEAM.**
-  - Triggers: `%{"value" => []}`, a matcher with `"value" => []`, the string `{"value":[]}`, or the list form `[%{"value" => []}]`, on a part with a text body.
-  - An explicit `content_type:` does not help. `pactffi_with_body` always evaluates `calc_content_type` (pact_models `v4/mod.rs:68`), which indexes `v[0]` without a check and panics inside `extern "C"`.
-  - Binary bodies, parts without a body, and other headers are not affected.
-  - Fix: in `PactEx.Consumer.Apply`, reject such `Content-Type` values with `-101` before any NIF call. Add the cases to the abort matrix.
-  - Consider an upstream issue for pact-reference.
-
 ## Important
 
 - [ ] **The abort matrix only checks that nothing crashes.** Its 49 type × header cells use `expect: :any`. Pin each cell to its deterministic outcome (`:ok` or `-101`), so a wrong classification fails the test.
@@ -19,6 +10,7 @@ Open issues from the plan 1 reviews. The full history is in the SDD ledger, whic
 
 ## Minor: code
 
+- [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
 - [ ] Wrap `mock_server_matched` / `mock_server_mismatches` in `on_large_stack`. Plan 2 needs this, because plugin mock servers run gRPC `block_on` under `MANAGER`.
 - [ ] Each `mock_server_mismatches` call leaks a CString into pact_ffi until cleanup. Document it, or avoid polling.
 - [ ] Builder NIFs and resource `Drop` take the global `PACT_HANDLES` lock on normal schedulers, so they can stall while a pact write runs. Document it, or make them `DirtyCpu`.

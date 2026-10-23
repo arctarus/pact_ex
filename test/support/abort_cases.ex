@@ -29,7 +29,8 @@ defmodule PactEx.AbortCases do
   # -- Cases ---------------------------------------------------------------
 
   @doc "Every case: fixed reviewer probes first, then the generated matrices."
-  def all, do: fixed() ++ type_matrix() ++ body_matrix() ++ form_matrix()
+  def all,
+    do: fixed() ++ type_matrix() ++ body_matrix() ++ form_matrix() ++ empty_content_type()
 
   @doc "The groups the test runs, as `{group, cases}`."
   def groups do
@@ -37,7 +38,8 @@ defmodule PactEx.AbortCases do
       {"fixed", fixed()},
       {"explicit type x header", type_matrix()},
       {"body x type", body_matrix()},
-      {"form", form_matrix()}
+      {"form", form_matrix()},
+      {"empty Content-Type", empty_content_type()}
     ]
   end
 
@@ -263,6 +265,111 @@ defmodule PactEx.AbortCases do
     for {bn, body, expect} <- bodies, {tn, topts} <- types do
       case_response("form: #{bn}, #{tn}", expect, topts, body)
     end
+  end
+
+  # A Content-Type header that pact_ffi stores as an empty list makes
+  # `pactffi_with_body` panic (pact_models indexes `v[0]`). All of these are
+  # rejected, with or without a body. Only the LAST element of a list decides,
+  # and anything that keeps at least one value is served.
+  defp empty_content_type do
+    empty = %{"value" => []}
+    matcher = %{"pact:matcher:type" => "type", "value" => []}
+    regex = %{"pact:matcher:type" => "regex", "regex" => ".*", "value" => []}
+    json = fn name -> %{"Content-Type" => name} end
+    map_body = %{"a" => 1}
+
+    rejected_headers = [
+      {"value", json.(empty)},
+      {"matcher", json.(matcher)},
+      {"regex matcher", json.(regex)},
+      {"atom keys", json.(%{value: []})},
+      {"atom key matcher", json.(%{:"pact:matcher:type" => "type", :value => []})},
+      {"json text", json.(~s({"value":[]}))},
+      {"json text, spaced", json.(~s(  {"value" :  [ ] }\n))},
+      {"json text, matcher", json.(~s({"pact:matcher:type":"type","value":[]}))},
+      {"json text, repeated key", json.(~s({"value":"a","value":[]}))},
+      {"list of one", json.([empty])},
+      {"list, last element", json.(["text/plain", empty])},
+      {"list, empty twice", json.([empty, empty])},
+      {"list, after a non-empty value", json.([%{"value" => ["a"]}, empty])},
+      {"list of json texts", json.([~s({"value":[]})])},
+      {"lowercase name", %{"content-type" => empty}},
+      {"atom name", %{"Content-Type": empty}},
+      {"lowercase atom name", %{"content-type": empty}}
+    ]
+
+    # {name, body, options}
+    all_bodies = [
+      {"map body", map_body, []},
+      {"list body", [map_body], []},
+      {"string body", "hello", []},
+      {"empty string body", "", []},
+      {"explicit json type and map body", map_body, [content_type: "application/json"]},
+      {"explicit text type and string body", "x", [content_type: "text/plain"]},
+      {"binary body", <<255, 0, 1>>, []},
+      {"no body", nil, []}
+    ]
+
+    some_bodies =
+      Enum.filter(all_bodies, &(elem(&1, 0) in ["map body", "string body", "no body"]))
+
+    core = ["value", "matcher", "json text"]
+
+    rejected =
+      for {hn, headers} <- rejected_headers,
+          {bn, body, bopts} <- if(hn in core, do: all_bodies, else: some_bodies) do
+        case_response(
+          "empty Content-Type: #{hn}, #{bn}",
+          :invalid,
+          [headers: headers] ++ bopts,
+          body
+        )
+      end
+
+    request =
+      for {bn, body} <- [{"map body", map_body}, {"string body", "hello"}, {"no body", nil}] do
+        %{
+          name: "empty Content-Type: request side, #{bn}",
+          expect: :invalid,
+          build: fn ->
+            HTTP.interaction("abort case")
+            |> HTTP.with_request(:post, "/x", headers: json.(empty), body: body)
+          end
+        }
+      end
+
+    accepted_headers = [
+      {"non-empty array value", json.(%{"value" => ["application/json"]})},
+      {"matcher with a string value",
+       json.(%{"pact:matcher:type" => "type", "value" => "text/plain"})},
+      {"matcher with a non-empty array",
+       json.(%{"pact:matcher:type" => "type", "value" => ["a/b"]})},
+      {"array of an empty array", json.(%{"value" => [[]]})},
+      {"null value", json.(%{"value" => nil})},
+      {"matcher without a value", json.(%{"pact:matcher:type" => "type"})},
+      {"object without a value", json.(%{"other" => []})},
+      {"json text, non-empty", json.(~s({"value":["application/json"]}))},
+      {"json text, not an object", json.("[]")},
+      {"empty string", json.("")},
+      {"whole header is an empty list", json.([])},
+      {"empty first element, then a value", json.([empty, "text/plain"])},
+      {"empty matcher first, then an array", json.([matcher, %{"value" => ["a/b", "c/d"]}])},
+      {"list of strings", json.(["application/json", "extra"])},
+      {"another header with an empty array", %{"X-Other" => empty}}
+    ]
+
+    accepted =
+      for {hn, headers} <- accepted_headers,
+          {bn, body, bopts} <- Enum.filter(all_bodies, &(elem(&1, 0) in ["map body", "no body"])) do
+        case_response(
+          "empty Content-Type: accepted #{hn}, #{bn}",
+          :ok,
+          [headers: headers] ++ bopts,
+          body
+        )
+      end
+
+    rejected ++ request ++ accepted
   end
 
   defp case_response(name, expect, opts, body) do

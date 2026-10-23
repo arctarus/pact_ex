@@ -98,7 +98,10 @@ The `Content-Type` header name can be in any case. It is written as
 `Content-Type`, so the pact has one entry. Two headers that differ only in case
 return an error. The value can be a string, a matcher (its `"value"` is used)
 or a list (its first element is used). The header is sent as you wrote it, even
-when `content_type:` differs.
+when `content_type:` differs. A value that pact_ffi would turn into an empty
+list returns an error, because pact_ffi aborts the VM on it: a map or a JSON
+string with `"value" => []` (a matcher too), or a list whose last element is
+one. The check ignores the body and `content_type:`.
 
 **XML and form bodies.** With an XML content type (`application/xml`,
 `text/xml`, or `application/` or `text/` with a `+xml` suffix) or

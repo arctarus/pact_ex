@@ -947,6 +947,181 @@ defmodule PactEx.ConsumerTest do
     end
   end
 
+  describe "run/4 Content-Type header that resolves to an empty list" do
+    # pactffi_with_body panics on these (pact_models indexes `v[0]` of the
+    # header) and the panic aborts the VM, until they were rejected up front.
+    # Binary and body-less parts did not abort, but are rejected as well.
+    @empty_value %{"value" => []}
+
+    @empty_headers [
+      {"value", %{"Content-Type" => @empty_value}},
+      {"matcher", %{"Content-Type" => %{"pact:matcher:type" => "type", "value" => []}}},
+      {"json text", %{"Content-Type" => ~s({"value":[]})}},
+      {"list form", %{"Content-Type" => [@empty_value]}},
+      {"last of a list", %{"Content-Type" => ["text/plain", @empty_value]}},
+      {"lowercase name", %{"content-type" => @empty_value}},
+      {"atom name", %{"Content-Type": @empty_value}}
+    ]
+
+    @empty_bodies [
+      {"map body", [body: %{"a" => 1}]},
+      {"explicit type and map body", [body: %{"a" => 1}, content_type: "application/json"]},
+      {"string body", [body: "hello"]},
+      {"empty string body", [body: ""]},
+      {"binary body", [body: <<255, 0, 1>>]},
+      {"no body", []}
+    ]
+
+    test "every shape is rejected on the response side, before any server starts", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      for {hn, headers} <- @empty_headers, {bn, opts} <- @empty_bodies do
+        i =
+          HTTP.interaction("empty content type")
+          |> HTTP.with_request(:get, "/e")
+          |> HTTP.will_respond_with(200, [headers: headers] ++ opts)
+
+        assert {:error, %PactEx.Error{code: -101, function: function, message: message}} =
+                 Consumer.start_mock_server(pact, [i]),
+               "#{hn}, #{bn}"
+
+        assert function == "PactEx.Consumer.start_mock_server/3"
+        assert message =~ "response header"
+        assert message =~ "empty content type"
+      end
+
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "every shape is rejected on the request side", %{pact: pact, tmp_dir: dir} do
+      for {hn, headers} <- @empty_headers, {bn, opts} <- @empty_bodies do
+        i =
+          HTTP.interaction("empty request content type")
+          |> HTTP.with_request(:post, "/e", [headers: headers] ++ opts)
+          |> HTTP.will_respond_with(200)
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i]),
+               "#{hn}, #{bn}"
+
+        assert message =~ "request header"
+      end
+
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "run/3 returns the error without calling the function and writes no pact", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      i =
+        HTTP.interaction("empty content type")
+        |> HTTP.with_request(:get, "/e")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => @empty_value},
+          body: %{"a" => 1}
+        )
+
+      parent = self()
+
+      assert {:error, %PactEx.Error{code: -101}} =
+               Consumer.run(pact, [i], fn _ -> send(parent, :called) end)
+
+      refute_received :called
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "an invalid interaction after a good one stops everything before any server starts", %{
+      pact: pact
+    } do
+      bad =
+        HTTP.interaction("empty content type")
+        |> HTTP.with_request(:get, "/e")
+        |> HTTP.will_respond_with(200, headers: %{"Content-Type" => @empty_value}, body: "x")
+
+      assert {:error, %PactEx.Error{code: -101}} =
+               Consumer.start_mock_server(pact, [simple("good", "/good"), bad])
+    end
+
+    test "a normal Content-Type is still served and recorded", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("normal content type")
+        |> HTTP.with_request(:post, "/n",
+          headers: %{"Content-Type" => "application/json"},
+          body: %{"in" => 1}
+        )
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => "application/json"},
+          body: %{"out" => 2}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.post!(m.url <> "/n", json: %{in: 1}, decode_body: false)
+                 assert resp.body == ~s({"out":2})
+                 assert Req.Response.get_header(resp, "content-type") == ["application/json"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["request"]["headers"] == %{"Content-Type" => ["application/json"]}
+      assert written["response"]["headers"] == %{"Content-Type" => ["application/json"]}
+      assert written["response"]["body"]["content"] == %{"out" => 2}
+    end
+
+    test "a non-empty array value and a matcher with a string value are still accepted", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      array =
+        HTTP.interaction("array content type")
+        |> HTTP.with_request(:get, "/a")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => %{"value" => ["application/json"]}},
+          body: %{"a" => 1}
+        )
+
+      matcher =
+        HTTP.interaction("matcher content type")
+        |> HTTP.with_request(:get, "/m")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => regex("application/json", "application/.+")},
+          body: %{"m" => 1}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [array, matcher], fn m ->
+                 for path <- ["/a", "/m"] do
+                   resp = Req.get!(m.url <> path, decode_body: false, retry: false)
+                   assert resp.status == 200
+                   assert Req.Response.get_header(resp, "content-type") == ["application/json"]
+                 end
+               end)
+
+      interactions = read_pact(dir)["interactions"]
+      assert length(interactions) == 2
+
+      for written <- interactions do
+        assert written["response"]["headers"]["Content-Type"] == ["application/json"]
+      end
+    end
+
+    test "the same value on another header is not touched", %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("other header")
+        |> HTTP.with_request(:get, "/o")
+        |> HTTP.will_respond_with(200, headers: %{"X-Other" => @empty_value}, body: %{"a" => 1})
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 assert %{status: 200} = Req.get!(m.url <> "/o", decode_body: false)
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+      assert written["response"]["headers"]["X-Other"] == []
+    end
+  end
+
   describe "run/4 invalid interactions" do
     test "an interaction without a request returns a PactEx.Error before any server starts", %{
       pact: pact,

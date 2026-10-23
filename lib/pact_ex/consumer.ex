@@ -33,7 +33,11 @@ defmodule PactEx.Consumer do
       any case and is written as `Content-Type`. Its value can be a string, a
       matcher (its `"value"` is used) or a list (its first element is used).
       Two headers that differ only in case are an error. A header that was not
-      the source of the type is sent as you wrote it.
+      the source of the type is sent as you wrote it. A `Content-Type` value
+      that pact_ffi would turn into an empty list (a map or JSON string with
+      `"value" => []`, a matcher too, or a list whose last element is one)
+      returns `{:error, %PactEx.Error{code: -101}}`, with or without a body,
+      because pact_ffi aborts the VM on it.
     * The default is `application/json` for a map or list, `text/plain` for a
       string that is valid UTF-8 without NUL bytes, and
       `application/octet-stream` for any other binary.
