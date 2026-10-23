@@ -669,8 +669,7 @@ defmodule PactEx.ConsumerTest do
       for {name, values} <- headers, String.downcase(name) == "content-type", do: {name, values}
     end
 
-    # The JSON that pact_ffi turns into `<root><name>text</name></root>`. A
-    # description of any other shape makes pact_ffi panic, which aborts the VM.
+    # The JSON that pact_ffi turns into `<root><name>text</name></root>`.
     defp xml_description(name, text) do
       %{
         "root" => %{
@@ -1063,6 +1062,382 @@ defmodule PactEx.ConsumerTest do
       for i <- cases do
         assert {:error, %PactEx.Error{code: -100}} = Consumer.start_mock_server(pact, [i])
       end
+    end
+  end
+
+  describe "run/4 XML and form-urlencoded bodies" do
+    # Each of these shapes made pact_ffi panic inside `with_body`, which aborts
+    # the VM, until the description was validated before the native call.
+    @xml_panic_shape %{"root" => %{"a" => "b"}}
+
+    defp xml_interaction(request_opts, response_opts) do
+      HTTP.interaction("xml body")
+      |> HTTP.with_request(:post, "/xml", request_opts)
+      |> HTTP.will_respond_with(200, response_opts)
+    end
+
+    test "a map that is not an XML description is rejected, by header or explicit type", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      cases = [
+        {"header", [headers: %{"Content-Type" => "application/xml"}]},
+        {"lowercase header", [headers: %{"content-type" => "text/xml; charset=utf-8"}]},
+        {"suffix header", [headers: %{"Content-Type" => "application/soap+xml"}]},
+        {"matcher header",
+         [headers: %{"Content-Type" => regex("application/xml", "application/.*")}]},
+        {"list header", [headers: %{"Content-Type" => ["application/xml"]}]},
+        {"explicit type", [content_type: "application/xml"]},
+        {"explicit type wins over header",
+         [content_type: "text/xml", headers: %{"Content-Type" => "application/json"}]}
+      ]
+
+      for {name, opts} <- cases, part <- [:request, :response] do
+        i =
+          case part do
+            :request ->
+              HTTP.interaction("bad #{name}")
+              |> HTTP.with_request(:post, "/x", [body: @xml_panic_shape] ++ opts)
+
+            :response ->
+              HTTP.interaction("bad #{name}")
+              |> HTTP.with_request(:get, "/x")
+              |> HTTP.will_respond_with(200, [body: @xml_panic_shape] ++ opts)
+          end
+
+        assert {:error,
+                %PactEx.Error{
+                  code: -101,
+                  function: "PactEx.Consumer.start_mock_server/3",
+                  message: message
+                }} = Consumer.start_mock_server(pact, [i])
+
+        assert message =~ "#{part} body"
+        assert message =~ ~s("bad #{name}")
+        assert message =~ "$.root"
+        assert message =~ "string"
+      end
+
+      refute File.exists?(pact_path(dir))
+    end
+
+    test "run/4 returns the error without calling the function", %{pact: pact} do
+      i =
+        xml_interaction([],
+          headers: %{"Content-Type" => "application/xml"},
+          body: @xml_panic_shape
+        )
+
+      parent = self()
+
+      assert {:error, %PactEx.Error{code: -101}} =
+               Consumer.run(pact, [i], fn _ -> send(parent, :called) end)
+
+      refute_received :called
+    end
+
+    test "an invalid description in a later interaction stops everything before any server starts",
+         %{pact: pact} do
+      good = simple("good", "/good")
+
+      bad =
+        xml_interaction([],
+          headers: %{"Content-Type" => "application/xml"},
+          body: @xml_panic_shape
+        )
+
+      assert {:error, %PactEx.Error{code: -101}} = Consumer.start_mock_server(pact, [good, bad])
+    end
+
+    test "a list or a map without root is rejected as an XML body", %{pact: pact} do
+      for body <- [[%{"root" => %{"name" => "a"}}], %{"name" => "a"}, %{}] do
+        i = xml_interaction([], content_type: "application/xml", body: body)
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i])
+
+        assert message =~ "XML"
+      end
+    end
+
+    test "each panic shape from pact_ffi is rejected, none aborts the VM", %{pact: pact} do
+      shapes = [
+        %{"root" => %{"pact:matcher:type" => "type"}},
+        %{"root" => %{"pact:matcher:type" => "type", "value" => "x"}},
+        %{"root" => %{"pact:matcher:type" => "type", "value" => %{"children" => []}}},
+        %{"root" => %{"name" => "r", "children" => nil}},
+        %{"root" => %{"name" => "r", "children" => "x"}},
+        %{"root" => %{"name" => "r", "children" => ["x"]}},
+        %{"root" => %{"name" => "r", "children" => [%{"name" => "c", "examples" => -1}]}},
+        %{"root" => %{"name" => "r", "children" => [%{"content" => "t", "examples" => 1.5}]}},
+        %{
+          "root" => %{
+            "name" => "r",
+            "attributes" => %{"id" => %{"pact:matcher:type" => "type"}}
+          }
+        }
+      ]
+
+      for shape <- shapes do
+        i = xml_interaction([], content_type: "application/xml", body: shape)
+
+        assert {:error, %PactEx.Error{code: -101}} = Consumer.start_mock_server(pact, [i]),
+               inspect(shape)
+      end
+    end
+
+    test "a content type that is not XML leaves the map untouched, whatever the header says",
+         %{pact: pact, tmp_dir: dir} do
+      i =
+        HTTP.interaction("json wins")
+        |> HTTP.with_request(:get, "/j")
+        |> HTTP.will_respond_with(200,
+          headers: %{"Content-Type" => "application/xml"},
+          content_type: "application/json",
+          body: @xml_panic_shape
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/j", decode_body: false, retry: false)
+                 assert JSON.decode!(resp.body) == @xml_panic_shape
+               end)
+
+      assert body_of(dir, "response")["contentType"] == "application/json"
+    end
+
+    test "a valid XML description is served as XML and recorded as application/xml", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      request_description = %{
+        "root" => %{
+          "name" => "note",
+          "attributes" => %{
+            "id" => %{"pact:matcher:type" => "regex", "value" => "a1", "regex" => "[a-z]\\d"}
+          },
+          "children" => [
+            %{
+              "name" => "to",
+              "children" => [
+                %{
+                  "content" => "Ann",
+                  "matcher" => %{"pact:matcher:type" => "regex", "regex" => "[A-Za-z]+"}
+                }
+              ]
+            }
+          ]
+        }
+      }
+
+      response_description = %{
+        "root" => %{
+          "name" => "library",
+          "attributes" => %{"version" => 2, "open" => true, "nothing" => nil},
+          "children" => [
+            %{"name" => "title", "children" => [%{"content" => "Elixir"}]},
+            %{
+              "pact:matcher:type" => "type",
+              "value" => %{
+                "name" => "book",
+                "attributes" => %{"isbn" => "1"},
+                "children" => [%{"name" => "price", "children" => [%{"content" => 10}]}]
+              },
+              "examples" => 2
+            },
+            %{"name" => "empty", "examples" => 0},
+            %{"content" => "tail"}
+          ]
+        }
+      }
+
+      i =
+        xml_interaction(
+          [headers: %{"Content-Type" => "application/xml"}, body: request_description],
+          headers: %{"Content-Type" => "application/xml"},
+          body: response_description
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.post!(m.url <> "/xml",
+                     body:
+                       ~s(<?xml version="1.0" encoding="UTF-8"?><note id="z9"><to>Bo</to></note>),
+                     headers: [{"content-type", "application/xml"}],
+                     decode_body: false,
+                     retry: false
+                   )
+
+                 assert resp.status == 200
+                 assert served_content_type(resp) == ["application/xml"]
+                 assert resp.body =~ "version='2'"
+                 assert resp.body =~ "open='true'"
+                 assert resp.body =~ "nothing=''"
+                 assert resp.body =~ "<title>Elixir</title>"
+
+                 assert resp.body =~
+                          "<book isbn='1'><price>10</price></book><book isbn='1'><price>10</price></book>"
+
+                 assert length(String.split(resp.body, "<book ")) == 3
+                 refute resp.body =~ "<empty"
+                 assert resp.body =~ "tail</library>"
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      for part <- ["request", "response"] do
+        assert written[part]["body"]["contentType"] == "application/xml"
+
+        assert [{"Content-Type", ["application/xml"]}] =
+                 content_type_entries(written[part]["headers"])
+      end
+
+      assert written["request"]["body"]["content"] =~ "<note"
+      assert written["response"]["body"]["content"] =~ "<library"
+
+      request_rules = written["request"]["matchingRules"]["body"]
+      assert Enum.any?(Map.keys(request_rules), &(&1 =~ "#text"))
+      assert Enum.any?(Map.keys(request_rules), &(&1 =~ "@id"))
+      assert Enum.any?(Map.keys(written["response"]["matchingRules"]["body"]), &(&1 =~ "book"))
+    end
+
+    test "a request that breaks the described matcher is reported as a mismatch", %{pact: pact} do
+      description = %{
+        "root" => %{
+          "name" => "note",
+          "attributes" => %{
+            "id" => %{"pact:matcher:type" => "regex", "value" => "a1", "regex" => "[a-z]\\d"}
+          }
+        }
+      }
+
+      i =
+        xml_interaction([content_type: "application/xml", body: description], [])
+
+      assert {:error, %PactEx.MismatchError{}} =
+               Consumer.run(pact, [i], fn m ->
+                 Req.post!(m.url <> "/xml",
+                   body: ~s(<?xml version="1.0" encoding="UTF-8"?><note id="99"/>),
+                   headers: [{"content-type", "application/xml"}],
+                   retry: false
+                 )
+               end)
+    end
+
+    test "a raw XML string is still sent byte for byte",
+         %{pact: pact, tmp_dir: dir} do
+      xml = ~s(<root><a>b</a></root>)
+
+      i = xml_interaction([], content_type: "application/xml", body: xml)
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.post!(m.url <> "/xml", decode_body: false, retry: false)
+                 assert resp.body == xml
+               end)
+
+      assert %{"content" => ^xml, "contentType" => "application/xml"} = body_of(dir, "response")
+    end
+
+    test "a form-urlencoded map is served as a form body and recorded", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      description = %{
+        "name" => "Ann Lee",
+        "age" => 30,
+        "tag" => ["p", "q"],
+        "code" => regex("a1", "[a-z]\\d")
+      }
+
+      i =
+        HTTP.interaction("form body")
+        |> HTTP.with_request(:post, "/form",
+          headers: %{"content-type" => "application/x-www-form-urlencoded"},
+          body: description
+        )
+        |> HTTP.will_respond_with(200,
+          content_type: "application/x-www-form-urlencoded",
+          body: %{"ok" => "yes", "n" => [1, 2]}
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp =
+                   Req.post!(m.url <> "/form",
+                     body: "age=30&code=a1&name=Ann+Lee&tag=p&tag=q",
+                     headers: [{"content-type", "application/x-www-form-urlencoded"}],
+                     decode_body: false,
+                     retry: false
+                   )
+
+                 assert resp.status == 200
+                 assert resp.body == "n=1&n=2&ok=yes"
+                 assert served_content_type(resp) == ["application/x-www-form-urlencoded"]
+               end)
+
+      [written] = read_pact(dir)["interactions"]
+
+      assert %{"contentType" => "application/x-www-form-urlencoded", "content" => request_body} =
+               written["request"]["body"]
+
+      assert request_body =~ "name=Ann+Lee"
+      assert request_body =~ "tag=p&tag=q"
+      assert get_in(written, ["request", "matchingRules", "body", "$.code"])
+    end
+
+    test "form-urlencoded values that pact_ffi would drop are rejected", %{pact: pact} do
+      cases = [
+        {%{"user" => %{"name" => "Ann"}}, "$.user"},
+        {%{"flag" => true}, "$.flag"},
+        {%{"nothing" => nil}, "$.nothing"},
+        {%{"l" => ["a", %{"k" => "v"}]}, "$.l[1]"},
+        {[%{"a" => "b"}], "map"}
+      ]
+
+      for {body, fragment} <- cases, part <- [:request, :response] do
+        i =
+          case part do
+            :request ->
+              HTTP.interaction("bad form")
+              |> HTTP.with_request(:post, "/f",
+                content_type: "application/x-www-form-urlencoded",
+                body: body
+              )
+
+            :response ->
+              HTTP.interaction("bad form")
+              |> HTTP.with_request(:get, "/f")
+              |> HTTP.will_respond_with(200,
+                headers: %{"Content-Type" => "application/x-www-form-urlencoded"},
+                body: body
+              )
+          end
+
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Consumer.start_mock_server(pact, [i])
+
+        assert message =~ "#{part} body"
+        assert message =~ ~s("bad form")
+        assert message =~ fragment
+      end
+    end
+
+    test "a raw form string is sent byte for byte", %{pact: pact} do
+      i =
+        HTTP.interaction("raw form")
+        |> HTTP.with_request(:get, "/rf")
+        |> HTTP.will_respond_with(200,
+          content_type: "application/x-www-form-urlencoded",
+          body: "a=1&b=%7B%7D"
+        )
+
+      assert :ok =
+               Consumer.run(pact, [i], fn m ->
+                 resp = Req.get!(m.url <> "/rf", decode_body: false, retry: false)
+                 assert resp.body == "a=1&b=%7B%7D"
+               end)
     end
   end
 

@@ -34,10 +34,19 @@ defmodule PactEx.Consumer do
     * The default is `application/json` for a map or list, `text/plain` for a
       string that is valid UTF-8 without NUL bytes, and
       `application/octet-stream` for any other binary.
-    * A map or list body is sent as JSON, except with an XML or form content
-      type: then it is a description of the XML or form body, in the format of
-      pact_ffi. An XML description of the wrong shape makes pact_ffi panic,
-      which aborts the VM, so use a string body for raw XML.
+    * A map or list body is sent as JSON, except with an XML content type
+      (`application/xml`, `text/xml`, `application/...+xml`) or
+      `application/x-www-form-urlencoded`. Then it is a description of the
+      body in the format of pact_ffi. pact_ffi panics on some descriptions,
+      which aborts the VM, so PactEx checks them first and returns
+      `{:error, %PactEx.Error{code: -101}}` naming the interaction and the path
+      of the problem. An XML description is `%{"root" => element}`, where an
+      element is `%{"name" => ..., "attributes" => ..., "children" => [...]}`,
+      a text node is `%{"content" => ...}`, and a matcher element is
+      `%{"pact:matcher:type" => ..., "value" => element}`. A form description
+      is a map of strings, numbers and lists of them (nested maps, booleans and
+      `nil` are errors, because pact_ffi would drop them). Use a string body
+      for raw XML or a raw form.
     * A string body is sent byte for byte. Any other body type is an error.
 
   The pact file is `<pact_dir>/<consumer>-<provider>.json`. It is merged with

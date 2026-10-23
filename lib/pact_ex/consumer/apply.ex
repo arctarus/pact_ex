@@ -19,8 +19,12 @@ defmodule PactEx.Consumer.Apply do
   #     pact_ffi adds the body's content type under that exact-case key, and
   #     a lowercase header would give the part two Content-Type entries.
   #     Two headers that differ only in case are rejected.
+  #   * a map or list body with an XML or form content type is checked by
+  #     `PactEx.Consumer.BodyCheck` in `validate/1`, before any native call:
+  #     pact_ffi panics (and aborts the VM) on some XML descriptions.
 
   alias PactEx.{Error, Native}
+  alias PactEx.Consumer.BodyCheck
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -37,7 +41,43 @@ defmodule PactEx.Consumer.Apply do
      )}
   end
 
-  def validate(%Interaction{}), do: :ok
+  def validate(%Interaction{description: description} = interaction) do
+    with :ok <- check_body(description, "request", interaction.request) do
+      check_body(description, "response", interaction.response)
+    end
+  end
+
+  # A map or list body with an XML or form content type is a description that
+  # pact_ffi reads. Some descriptions make it panic, which aborts the VM, so
+  # they are checked here, before any native call. Anything else that is wrong
+  # with the part (bad header names, unencodable bodies) is reported later by
+  # the apply path, so it is skipped here.
+  defp check_body(_description, _part, nil), do: :ok
+
+  defp check_body(description, part, %{body: body} = struct)
+       when is_map(body) or is_list(body) do
+    with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
+         {:ok, json} <- encode_json(body, "#{part} body"),
+         kind when kind != :other <-
+           BodyCheck.kind(content_type(struct, headers), header_content_type(headers)),
+         :ok <- BodyCheck.validate(kind, JSON.decode!(json)) do
+      :ok
+    else
+      {:error, reason} when is_binary(reason) ->
+        {:error, invalid(body_message(description, part, reason))}
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp check_body(_description, _part, _struct), do: :ok
+
+  defp body_message(description, part, reason) do
+    "#{part} body of interaction #{inspect(description)} cannot be sent: #{reason}. " <>
+      "With an XML or form-urlencoded content type a map or list is a description of " <>
+      "the body in pact_ffi's format, not JSON. Pass a string for a raw body."
+  end
 
   @doc """
   Applies `interaction` to the pact handle `pact_ref`.
@@ -172,14 +212,16 @@ defmodule PactEx.Consumer.Apply do
   defp content_type(%{content_type: content_type}, _headers) when is_binary(content_type),
     do: content_type
 
-  defp content_type(_part, headers) do
+  defp content_type(_part, headers), do: header_content_type(headers)
+
+  defp header_content_type(headers) do
     Enum.find_value(headers, fn
-      {"Content-Type", values} -> header_content_type(values)
+      {"Content-Type", values} -> header_value(values)
       _other -> nil
     end)
   end
 
-  defp header_content_type(values) do
+  defp header_value(values) do
     case List.wrap(values) do
       [value | _] when is_binary(value) -> value
       [%{"value" => value} | _] when is_binary(value) -> value

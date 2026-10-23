@@ -88,16 +88,44 @@ default of the body type. This holds for every body type.
 | A UTF-8 string | `text/plain` | Text, byte for byte. |
 | A binary that is not valid UTF-8, or has NUL bytes | `application/octet-stream` | A binary body. |
 
+Any other body type returns `{:error, %PactEx.Error{}}`.
+
 The `Content-Type` header name can be in any case. It is written as
 `Content-Type`, so the pact has one entry. Two headers that differ only in case
 return an error. The value can be a string, a matcher (its `"value"` is used)
 or a list (its first element is used). The header is sent as you wrote it, even
-when `content_type:` differs. Any other body type returns
-`{:error, %PactEx.Error{}}`.
+when `content_type:` differs.
 
-A map or list body with an XML or form content type is a description of the
-body in pact_ffi's format, not JSON. An XML description of the wrong shape makes
-pact_ffi panic, which aborts the VM. For raw XML, pass a string.
+**XML and form bodies.** With an XML content type (`application/xml`,
+`text/xml` or `application/...+xml`) or `application/x-www-form-urlencoded`, a map or list
+is not JSON. It is a description of the body in pact_ffi's format. PactEx checks
+the description before it calls pact_ffi, because some shapes make pact_ffi
+panic, which would abort the VM. A bad description returns
+`{:error, %PactEx.Error{code: -101}}` that names the interaction and the path of
+the problem.
+
+An XML description is a map with a `"root"` element. An element is
+`%{"name" => ..., "attributes" => %{...}, "children" => [...]}`. A child is an
+element, a text node `%{"content" => "text"}`, or a matcher element
+`%{"pact:matcher:type" => "type", "value" => element}`. Any child can have an
+`"examples"` count that is an integer from 0 up. A form description is a map of
+strings, numbers, matchers with such a value, and lists of them. pact_ffi drops
+nested maps, booleans and `nil` from a form body, so they return an error.
+
+```elixir
+PactEx.HTTP.will_respond_with(interaction, 200,
+  headers: %{"Content-Type" => "application/xml"},
+  body: %{
+    "root" => %{
+      "name" => "note",
+      "attributes" => %{"id" => "1"},
+      "children" => [%{"name" => "to", "children" => [%{"content" => "Ann"}]}]
+    }
+  }
+)
+```
+
+For raw XML or a raw form, pass a string. It is sent byte for byte:
 
 ```elixir
 PactEx.HTTP.with_request(interaction, :post, "/notes",
