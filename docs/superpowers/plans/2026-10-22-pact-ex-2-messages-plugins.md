@@ -74,7 +74,7 @@ defmodule PactEx.Native.MessagesTest do
     pact
   end
 
-  test "async message reifies with generators applied and metadata set" do
+  test "async message reifies matchers to their examples and sets metadata" do
     pact = v4_pact()
     i = Native.new_message_interaction(pact, "a weather message")
     :ok = Native.given(i, "weather available")
@@ -362,7 +362,7 @@ git commit -m "feat: add plugin loading and plugin contents for HTTP interaction
   - `PactEx.Message.with_contents(msg, contents, opts \\ []) :: t()` with the opt `content_type`. `contents` may be a map/list (JSON), a binary or a `%PluginContents{}`.
   - `PactEx.Message.with_metadata(msg, map) :: t()` merges into `metadata`.
   - `%PactEx.Message.Reified{contents: term(), metadata: map(), content_type: String.t() | nil}`. `contents` is decoded JSON for JSON content types and raw bytes otherwise, and `nil` for JSON `null` (see step 6 of the runner). Text with a JSON content type that is not valid JSON is raw bytes too. The moduledoc says so.
-  - `PactEx.Message.run(Pact.t(), t(), (Reified.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}`. It returns a `-101` `%PactEx.Error{function: "PactEx.Message.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when the message has no contents, that is, `contents` is `nil` or `""`, or when the contents are a `%PluginContents{}` and `pact.plugins == []` (the Task 2 rule). `pactffi_message_reify` returns the V3 message shape for a pact with spec V3 or lower: no `contents.content` envelope, so the decoding below would be wrong. A message without contents reifies to `""`, which pact_ffi reports without a stored error message, so we check in Elixir instead. An empty string counts as no contents: `plan_body("")` gives `{:text, "text/plain", ""}`, pact_ffi turns that into an empty body, and reify returns `""` for it too.
+  - `PactEx.Message.run(Pact.t(), t(), (Reified.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}`. It returns a `-101` `%PactEx.Error{function: "PactEx.Message.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when the message has no contents, that is, `contents` is `nil` or `""`, or when the contents are a `%PluginContents{}` and `pact.plugins == []` (the Task 2 rule). It takes no options yet: `opts` keeps the signature in line with `SyncMessage.run/4`, and any option raises `ArgumentError` (`Keyword.validate!(opts, [])`). `pactffi_message_reify` returns the V3 message shape for a pact with spec V3 or lower: no `contents.content` envelope, so the decoding below would be wrong. A message without contents reifies to `""`, which pact_ffi reports without a stored error message, so we check in Elixir instead. An empty string counts as no contents: `plan_body("")` gives `{:text, "text/plain", ""}`, pact_ffi turns that into an empty body, and reify returns `""` for it too.
   - `PactEx.Message.run!(...) :: :ok`
 
 - [ ] **Step 1: Write the failing tests**
@@ -576,7 +576,7 @@ git commit -m "feat: add async message consumer with pact_erlang parity suite"
   - `PactEx.SyncMessage.with_request(sm, contents, opts \\ []) :: t()` with the opt `content_type`.
   - `PactEx.SyncMessage.will_respond_with(sm, contents, opts \\ []) :: t()` appends to `responses`, with the opt `content_type`.
   - `PactEx.SyncMessage.with_plugin_contents(sm, PluginContents.t()) :: t()` sets the whole request/response definition through the plugin, as pact-go `WithContents` does.
-  - `%PactEx.SyncMessage.Generated{request: term(), responses: [term()], transport: %{port: pos_integer(), url: String.t()} | nil}`
+  - `%PactEx.SyncMessage.Generated{request: term(), responses: [term()], transport: %{port: pos_integer(), address: String.t()} | nil}`. `address` is `"<host>:<port>"`, the target a gRPC client connects to, with an IPv6 host in brackets (`"[::1]:50051"`). It is not a URL: a plugin transport has no `http://` scheme.
   - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule), and when there is no `plugin_contents` and a response is `nil` or `""`. Why the responses: each `with_body` on `:response` appends one response (`pactffi_with_body`, `handles.rs:1952`), so a `nil` response, which plans to no body and no call, would be dropped without a word and `fun` would get one response fewer. A `""` response becomes an empty body that no provider can be checked against.
   - `PactEx.SyncMessage.run!(...) :: :ok`
 
@@ -855,7 +855,7 @@ Expected: the 4 gRPC tests FAIL with the `ArgumentError: transport support lands
 
 When `transport` is set:
 1. After applying the interaction, call `create_mock_server(pact_ref, host, port, transport, config_json)`. `config_json` is `nil` without `transport_config`, and otherwise the JSON that `Apply.plan_json(transport_config, "option :transport_config", "PactEx.SyncMessage.run/4")` planned with the other checks, before any native call.
-2. Build `%Generated{transport: %{port: p, url: "#{host}:#{p}"}}`. Fill `request` and `responses` from `sync_message_generate_contents`.
+2. Build `%Generated{transport: %{port: p, address: address}}`, with `address` as described in Task 4 (an IPv6 host in brackets, like `MockServer.build_url/2` does). Fill `request` and `responses` from `sync_message_generate_contents`.
 3. Build `%MockServer{port: p, url: ..., pact_dir: pact_dir, pact_ref: pact_ref}`, as `start_mock_server/3` does. Run `fun`, then `matched? = MockServer.matched?(mock)` and, when it is false, `mismatches = MockServer.mismatches(mock)`. Do not call the NIFs and decode by hand: the mapping of a null result to `[]` lives in `MockServer.mismatches/1`, and `verdict(false, nil)` would give a `MismatchError` with `mismatches: nil`. `Consumer.finish/1` reads them the same way.
 4. Decide with `PactEx.Consumer.verdict(matched?, mismatches)`, the same function `Consumer.run/4` uses. On `:match`, `write_pact_file(p, pact_dir, false)`. On `{:error, error}`, return it. A failed plugin RPC therefore gives `%PactEx.Error{code: -102}` and not a `MismatchError` with an empty list. `verdict/2` hard-codes `function: "PactEx.Consumer.run/4"` on that error, so `SyncMessage.run/4` replaces `function` with `"PactEx.SyncMessage.run/4"` before it returns a `%PactEx.Error{}` from `verdict/2`.
 5. In one `after`: `cleanup_mock_server(p)`, then `Plugin.cleanup(pact_ref)`.
@@ -946,7 +946,7 @@ git commit -m "test: cover protobuf async messages via the plugin"
 
 - [ ] **Step 1: Update `ci.yml`**
 
-Add a step before `mix test` that runs `scripts/install-protobuf-plugin.sh`. Add a final step that fails the job if a plugin process survived the suite. Cleanup and freeing may finish asynchronously, so it polls for up to 5 s before it fails:
+Add a step before `mix test` that runs `scripts/install-protobuf-plugin.sh`. After it, add `cargo test -- --ignored` in `native/pact_ex_nif`, so the Rust test of the exactly-once cleanup (`a_second_cleanup_of_one_pact_leaves_the_plugin_to_another_pact`) runs against the real plugin. It must run before `mix test`: it asserts that no plugin process is running when it starts. Add a final step that fails the job if a plugin process survived the suite. Cleanup and freeing may finish asynchronously, so it polls for up to 5 s before it fails:
 
 ```sh
 for _ in $(seq 50); do
