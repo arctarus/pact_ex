@@ -52,33 +52,37 @@ defmodule PactEx.Consumer.BodyCheck do
   @spec check(:xml | :form, String.t(), :encoded | :text) :: :ok | {:error, String.t()}
   def check(kind, text, origin) do
     if Native.detect_json(text) do
-      case Native.json_text_shape(text) do
-        {:object, rendered} ->
-          # `decode(text)` finds repeated keys, which serde_json hides. The
-          # description is then checked as serde_json renders it, so numbers
-          # such as -0 or 2^64 are what pact_ffi reads.
-          with {:ok, _decoded} <- decode(text),
-               {:ok, decoded} <- decode(rendered),
-               do: validate(kind, decoded)
-
-        :other ->
-          {:error, "the JSON is not an object, so pact_ffi would build an empty body"}
-
-        :invalid ->
-          {:error,
-           "the text looks like JSON to pact_ffi but is not valid JSON, " <>
-             "and pact_ffi would drop it or panic"}
-
-        :too_deep ->
-          {:error,
-           "the JSON is nested 128 levels or more (serde_json's limit), " <>
-             "and pact_ffi would drop it or panic"}
-      end
+      check_description(kind, text)
     else
       case origin do
         :text -> :ok
         :encoded -> {:error, "pact_ffi would not read this JSON as a description"}
       end
+    end
+  end
+
+  defp check_description(kind, text) do
+    case Native.json_text_shape(text) do
+      {:object, rendered} ->
+        # `decode(text)` finds repeated keys, which serde_json hides. The
+        # description is then checked as serde_json renders it, so numbers
+        # such as -0 or 2^64 are what pact_ffi reads.
+        with {:ok, _decoded} <- decode(text),
+             {:ok, decoded} <- decode(rendered),
+             do: validate(kind, decoded)
+
+      :other ->
+        {:error, "the JSON is not an object, so pact_ffi would build an empty body"}
+
+      :invalid ->
+        {:error,
+         "the text looks like JSON to pact_ffi but is not valid JSON, " <>
+           "and pact_ffi would drop it or panic"}
+
+      :too_deep ->
+        {:error,
+         "the JSON is nested 128 levels or more (serde_json's limit), " <>
+           "and pact_ffi would drop it or panic"}
     end
   end
 
@@ -294,19 +298,23 @@ defmodule PactEx.Consumer.BodyCheck do
         :ok
 
       list when is_list(list) ->
-        list
-        |> Enum.with_index()
-        |> Enum.find_value(:ok, fn {item, index} ->
-          item = resolve(item)
-
-          if is_binary(item) or is_number(item),
-            do: nil,
-            else: form_error("#{path}[#{index}]", item)
-        end)
+        form_list(list, path)
 
       other ->
         form_error(path, other)
     end
+  end
+
+  defp form_list(list, path) do
+    list
+    |> Enum.with_index()
+    |> Enum.find_value(:ok, fn {item, index} ->
+      item = resolve(item)
+
+      if is_binary(item) or is_number(item),
+        do: nil,
+        else: form_error("#{path}[#{index}]", item)
+    end)
   end
 
   # `process_matcher`: `arrayContains` (or `array-contains`) takes its value

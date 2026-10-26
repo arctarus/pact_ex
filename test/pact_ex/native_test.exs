@@ -93,7 +93,7 @@ defmodule PactEx.NativeTest do
 
     test "a NUL byte is just text" do
       refute PactEx.Native.detect_json("a\0b")
-      assert PactEx.Native.detect_json("{\"a\":\"x\0\"}")
+      assert PactEx.Native.detect_json(~s({"a":"x\0"}))
     end
 
     test "raises ArgumentError for anything that is not a UTF-8 string" do

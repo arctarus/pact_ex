@@ -43,9 +43,8 @@ defmodule PactEx.Consumer.Apply do
   # `plan_json/3` does the same for JSON that is not a body (provider state
   # params, message metadata).
 
-  alias PactEx.{Error, Native}
   alias PactEx.Consumer.BodyCheck
-  alias PactEx.HTTP
+  alias PactEx.{Error, HTTP, Native}
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -147,17 +146,21 @@ defmodule PactEx.Consumer.Apply do
     with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
          :ok <- check_params(headers, "#{part} header", description),
          :ok <- check_content_type_header(headers, part, description) do
-      if supported_body?(body) do
-        label = "#{part} body of interaction #{inspect(description)}"
-        candidates = [{:explicit, struct.content_type}, {:header, header_candidate(headers)}]
+      plan_part_body(part, description, struct, headers)
+    end
+  end
 
-        with {:ok, {source, planned}} <- plan_contents(body, candidates, label) do
-          {:ok, %{headers: typed_headers(headers, source, planned), body: planned}}
-        end
-      else
-        {:error,
-         invalid("unsupported #{part} body: #{inspect(body)}, expected a binary, map or list")}
+  defp plan_part_body(part, description, %{body: body} = struct, headers) do
+    if supported_body?(body) do
+      label = "#{part} body of interaction #{inspect(description)}"
+      candidates = [{:explicit, struct.content_type}, {:header, header_candidate(headers)}]
+
+      with {:ok, {source, planned}} <- plan_contents(body, candidates, label) do
+        {:ok, %{headers: typed_headers(headers, source, planned), body: planned}}
       end
+    else
+      {:error,
+       invalid("unsupported #{part} body: #{inspect(body)}, expected a binary, map or list")}
     end
   end
 
@@ -335,10 +338,14 @@ defmodule PactEx.Consumer.Apply do
          )}
 
       {name, values} ->
-        with {:ok, name} <- name(name, label) do
-          indexed(values, "#{label} #{inspect(name)}", fn _index, _value -> :ok end)
-        end
+        check_values(name, values, label)
     end)
+  end
+
+  defp check_values(name, values, label) do
+    with {:ok, name} <- name(name, label) do
+      indexed(values, "#{label} #{inspect(name)}", fn _index, _value -> :ok end)
+    end
   end
 
   defp display_name(name) when is_atom(name) and name not in [nil, true, false],
@@ -454,23 +461,27 @@ defmodule PactEx.Consumer.Apply do
   defp status(other), do: {:error, invalid("unsupported response status: #{inspect(other)}")}
 
   defp query(handle, query) do
-    each_ok(query, fn {name, values} ->
-      with {:ok, name} <- name(name, "query parameter") do
-        indexed(values, "query parameter #{inspect(name)}", fn index, value ->
-          native(Native.with_query_parameter(handle, name, index, value))
-        end)
-      end
-    end)
+    each_ok(query, fn {name, values} -> query_parameter(handle, name, values) end)
+  end
+
+  defp query_parameter(handle, name, values) do
+    with {:ok, name} <- name(name, "query parameter") do
+      indexed(values, "query parameter #{inspect(name)}", fn index, value ->
+        native(Native.with_query_parameter(handle, name, index, value))
+      end)
+    end
   end
 
   defp headers(handle, part, headers) do
-    each_ok(headers, fn {name, values} ->
-      with {:ok, name} <- name(name, "#{part} header") do
-        indexed(values, "#{part} header #{inspect(name)}", fn index, value ->
-          native(Native.with_header(handle, part, name, index, value))
-        end)
-      end
-    end)
+    each_ok(headers, fn {name, values} -> header(handle, part, name, values) end)
+  end
+
+  defp header(handle, part, name, values) do
+    with {:ok, name} <- name(name, "#{part} header") do
+      indexed(values, "#{part} header #{inspect(name)}", fn index, value ->
+        native(Native.with_header(handle, part, name, index, value))
+      end)
+    end
   end
 
   # An atom header name is written like Req writes it (`HTTP.header_name/1`).

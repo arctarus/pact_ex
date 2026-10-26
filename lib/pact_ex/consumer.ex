@@ -83,8 +83,8 @@ defmodule PactEx.Consumer do
   an existing file, so several runs can add interactions to the same pact.
   """
 
-  alias PactEx.{Error, MismatchError, MockServer, Native, Pact}
   alias PactEx.Consumer.Apply
+  alias PactEx.{Error, MismatchError, MockServer, Native, Pact}
   alias PactEx.HTTP.Interaction
 
   @doc """
@@ -183,6 +183,8 @@ defmodule PactEx.Consumer do
            pact_dir: pact.pact_dir,
            pact_ref: pact_ref
          }}
+      else
+        {:error, %Error{}} = error -> error
       end
     end
   end

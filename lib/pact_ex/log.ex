@@ -90,6 +90,7 @@ defmodule PactEx.Log do
 
   defp encode_sink!(other), do: bad_sink!(other)
 
+  @spec bad_sink!(term()) :: no_return()
   defp bad_sink!(other) do
     raise ArgumentError,
           "option :sink must be :stdout, :stderr or {:file, path} with a UTF-8 path " <>
