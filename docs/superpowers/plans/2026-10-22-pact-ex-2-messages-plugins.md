@@ -161,7 +161,7 @@ git commit -m "feat(native): add message, sync message and plugin NIFs"
 - Consumes: Task 1 NIFs, and the plan 1 `PactEx.Consumer` and `PactEx.MockServer`.
 - Produces:
   - `%PactEx.Pact{}` gains `plugins: [{String.t(), String.t() | nil}]` (default `[]`).
-  - `PactEx.using_plugin(pact, name, version \\ nil) :: Pact.t()` appends to `plugins`.
+  - `PactEx.using_plugin(pact, name, version \\ nil) :: Pact.t()` appends to `plugins`. It raises `ArgumentError` when `plugins` already has an entry with that name, whatever its version. Why: each `pactffi_using_plugin` call raises a global per-plugin access count by one, but `pactffi_cleanup_plugins` lowers it once per unique plugin recorded in the pact. A plugin loaded twice would end with a count of 1 and its process would never exit.
   - `%PactEx.PluginContents{content_type: String.t(), contents: map()}`
   - `PactEx.Plugin.contents(content_type, contents :: map()) :: PluginContents.t()`
   - `PactEx.Plugin.load_all(pact_ref, Pact.t()) :: :ok | {:error, PactEx.Error.t()}` calls `Native.using_plugin/3` for each plugin in order.
@@ -195,6 +195,13 @@ defmodule PactEx.PluginTest do
   test "using_plugin/3 accumulates plugins in order" do
     pact = PactEx.new("c", "p") |> PactEx.using_plugin("protobuf", "0.8.1") |> PactEx.using_plugin("csv")
     assert pact.plugins == [{"protobuf", "0.8.1"}, {"csv", nil}]
+  end
+
+  test "using_plugin/3 rejects a plugin that is already in the pact" do
+    pact = PactEx.new("c", "p") |> PactEx.using_plugin("protobuf", "0.8.1")
+
+    assert_raise ArgumentError, ~r/protobuf/, fn -> PactEx.using_plugin(pact, "protobuf", "0.8.1") end
+    assert_raise ArgumentError, ~r/protobuf/, fn -> PactEx.using_plugin(pact, "protobuf") end
   end
 
   test "contents/2 builds a PluginContents value" do
@@ -579,7 +586,7 @@ The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `mix test test/acceptance/grpc_consumer_test.exs test/pact_ex/plugin_test.exs`
-Expected: PASS (4 + 4 tests).
+Expected: PASS (4 + 5 tests).
 
 - [ ] **Step 6: Commit**
 

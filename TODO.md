@@ -9,7 +9,7 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
 ### Blocking
 
 - [x] **code** Clean up the plugins of a pact handle exactly once. `pactffi_cleanup_plugins` decrements a global per-plugin access count on every call and does not check whether the handle was already cleaned. The plan calls it from `MockServer.stop/1` (documented as idempotent), from the `start_mock_server` failure path, and from nested `after` blocks. A second call can kill a plugin process that a concurrent pact still uses. `PactResource::drop` doesn't clean up at all, so a pact that is never cleaned up leaks the process. Fix: add an `AtomicBool` to `PactResource`, have the `cleanup_plugins` NIF compare-and-swap it, and clean up in `Drop` too.
-- [ ] **plan** Deduplicate plugins in `PactEx.using_plugin/3`, or reject a repeated name. Each `pactffi_using_plugin` call increments the count, but cleanup decrements once per unique plugin (`plugin_data()` is `unique`). A repeated plugin leaks its process.
+- [x] **plan** Deduplicate plugins in `PactEx.using_plugin/3`, or reject a repeated name. Each `pactffi_using_plugin` call increments the count, but cleanup decrements once per unique plugin (`plugin_data()` is `unique`). A repeated plugin leaks its process.
 - [x] **code** Wrap `mock_server_matched` and `mock_server_mismatches` in `on_large_stack`. For a plugin mock server they run a gRPC `block_on` while holding `MANAGER`.
 - [x] **code + plan** Handle plugin mismatches:
   - They have the shape `path` / `error` / `mismatches`, without `type` or `method`. Teach `MismatchError.describe/1` that shape.
