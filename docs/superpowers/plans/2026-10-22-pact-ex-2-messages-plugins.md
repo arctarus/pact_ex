@@ -432,7 +432,38 @@ defmodule PactEx.MessageTest do
 end
 ```
 
-`test/acceptance/message_end_to_end_test.exs` ports pact_erlang `message_end_to_end_SUITE` `animal_consume_message_1..4`, with the same descriptions, states, params and the `like/1` weather body. It uses the consumer `"animal_service"` and the provider `"weather_service"` in a shared `tmp_dir`. Each test calls `Message.run/3` with a handler that asserts the reified `weather.temperature == 23.0`. The last test asserts that the written pact has 4 interactions.
+`test/acceptance/message_end_to_end_test.exs` ports pact_erlang `message_end_to_end_SUITE` `animal_consume_message_1..4`, with the same descriptions, states, params and the `like/1` weather body. It uses the consumer `"animal_service"` and the provider `"weather_service"`.
+
+It is one test in one module, with one directory from `setup_all`. Each `Message.run/4` writes in merge mode, so the four runs add up in one file. Four separate tests would not work: `@tag :tmp_dir` gives each test its own directory, and ExUnit randomizes the order of tests, so a last test that asserts 4 interactions could run first. A unique directory under `System.tmp_dir!/0` also keeps a file left by an earlier run from changing the count.
+
+```elixir
+# test/acceptance/message_end_to_end_test.exs
+defmodule PactEx.Acceptance.MessageEndToEndTest do
+  use ExUnit.Case, async: true
+  alias PactEx.Message
+
+  setup_all do
+    dir = Path.join(System.tmp_dir!(), "pact_ex_message_e2e_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    %{dir: dir}
+  end
+
+  test "four consumed messages end up in one pact", %{dir: dir} do
+    pact = PactEx.new("animal_service", "weather_service", pact_dir: dir)
+
+    # The four messages of pact_erlang animal_consume_message_1..4, in order.
+    for msg <- animal_messages() do
+      assert :ok = Message.run(pact, msg, fn %Message.Reified{contents: contents} -> assert contents["weather"]["temperature"] == 23.0 end)
+    end
+
+    written = dir |> Path.join("animal_service-weather_service.json") |> File.read!() |> JSON.decode!()
+    assert length(written["interactions"]) == 4
+  end
+end
+```
+
+`animal_messages/0` is a private helper that returns the four `%Message{}` values.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -458,7 +489,7 @@ An exception from `fun` propagates without writing.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`
-Expected: PASS (11 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
 
