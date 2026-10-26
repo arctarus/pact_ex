@@ -14,7 +14,7 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
 - [x] **code + plan** Handle plugin mismatches:
   - They have the shape `path` / `error` / `mismatches`, without `type` or `method`. Teach `MismatchError.describe/1` that shape.
   - A failed plugin RPC makes `pactffi_mock_server_mismatches` return null, which today becomes `[]` and an empty `MismatchError` that looks like a real mismatch. Return a `PactEx.Error` instead.
-- [ ] **plan + code** Body rules for plugin contents and messages:
+- [x] **plan + code** Body rules for plugin contents and messages:
   - `%PluginContents{}` is a map, so it hits the `is_map(body)` clause of `Apply.plan_part/3` (`apply.ex:108`) during `validate/1`. The new clause must come before that one in `plan_part`, not only in `interaction/2`.
   - The plan says to reuse the body rules, but `plan_part/3` is private and expects a struct with `headers`. Name the public function to extract (body plus explicit content type, without headers) before Task 3.
   - `invalid/1` hard-codes `"PactEx.Consumer.start_mock_server/3"`. Pass the entry point in, so message errors name `Message.run/4` or `SyncMessage.run/4`.

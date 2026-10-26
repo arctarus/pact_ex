@@ -203,7 +203,9 @@ git commit -m "feat(native): add message, sync message and plugin NIFs"
   - `PactEx.Plugin.load_all(pact_ref, Pact.t()) :: :ok | {:error, PactEx.Error.t()}` calls `Native.using_plugin/3` for each plugin in order.
   - `PactEx.Plugin.cleanup(pact_ref) :: :ok` calls `Native.cleanup_plugins/1` and ignores the boolean.
   - `PactEx.Plugin.installed?(name, version) :: boolean()` checks `<plugin dir>/<name>-<version>/pact-plugin.json`. The plugin dir is `$PACT_PLUGIN_DIR` or `~/.pact/plugins`.
-  - `Apply.interaction/2` handles a `%PluginContents{}` body with `Native.interaction_contents(i, part, content_type, JSON.encode!(contents))`.
+  - `Apply.plan_part/3` gets a `%PluginContents{}` body clause before the `is_map(body)` path. A struct is a map, so without the clause a plugin body would be JSON-encoded as a plain map during planning. `validate/1` plans both parts through `plan_part/3`, so the clause covers `validate/1` as well as `interaction/2`. It plans the body as `{:plugin, content_type, JSON.encode!(contents)}`. `Apply.interaction/2` applies the other headers first, then applies that plan with `Native.interaction_contents(i, part, content_type, json)`.
+  - Plugin contents and an explicit content type: the `content_type` of the `%PluginContents{}` wins. An explicit `:content_type` option or a Content-Type header on the same part that names a different media type (compared case-insensitively, ignoring parameters) is a `-101` error naming the entry point. One that names the same media type is accepted.
+  - `Apply.plan_body/4` (used by messages in Tasks 3 and 4) is not given `%PluginContents{}`: the message runners handle it before they call it.
   - `start_mock_server/3` calls `Plugin.load_all/2` before applying interactions. On any later failure it calls `Plugin.cleanup/1` before returning the error. `MockServer.stop/1` calls `Plugin.cleanup(pact_ref)` after `cleanup_mock_server`. `stop/1` stays idempotent because the cleanup is exactly-once.
   - A new `transport` option in `start_mock_server/3` and `run/4`, with default `"http"`.
 
@@ -251,6 +253,21 @@ defmodule PactEx.PluginTest do
 
     assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}} =
              Consumer.start_mock_server(pact, [i])
+  end
+
+  test "plugin contents next to a different explicit content type are rejected before any native call" do
+    body = Plugin.contents("application/protobuf", %{"a" => 1})
+    i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200, body: body, content_type: "text/plain")
+
+    assert {:error, %PactEx.Error{function: "PactEx.Consumer.start_mock_server/3", code: -101}} =
+             Consumer.start_mock_server(PactEx.new("c", "p"), [i])
+  end
+
+  test "validate accepts plugin contents with the same content type" do
+    body = Plugin.contents("application/protobuf", %{"a" => 1})
+    i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200, body: body, content_type: "application/protobuf")
+
+    assert :ok = PactEx.Consumer.Apply.validate(i)
   end
 
   @tag :plugin
@@ -308,7 +325,7 @@ git commit -m "feat: add plugin loading and plugin contents for HTTP interaction
 - Test: `test/pact_ex/message_test.exs`, `test/acceptance/message_end_to_end_test.exs`
 
 **Interfaces:**
-- Consumes: Task 1 NIFs, the Task 2 `Plugin.load_all/2`, `Plugin.cleanup/1` and `PluginContents`, plan 1 `PactEx.Error`, and plan 1 body encoding in `PactEx.Consumer.Apply` (reuse the body rules, don't duplicate them).
+- Consumes: Task 1 NIFs, the Task 2 `Plugin.load_all/2`, `Plugin.cleanup/1` and `PluginContents`, plan 1 `PactEx.Error`, and `PactEx.Consumer.Apply.plan_body/4`, the body rules shared with HTTP. Message contents go through it with the entry point `"PactEx.Message.run/4"`. It returns `{:ok, nil | {:text, type, text} | {:binary, type, binary}}` or a `-101` `%PactEx.Error{}` whose `function` is that entry point.
 - Produces:
   - `%PactEx.Message{description: String.t(), provider_states: [{String.t(), map() | nil}], contents: term(), content_type: String.t() | nil, metadata: %{String.t() => term()}}`
   - `PactEx.Message.new(description) :: t()`
@@ -386,7 +403,7 @@ Expected: FAIL with `PactEx.Message.new/1 is undefined`.
 1. `new_pact` and `with_specification`.
 2. `Plugin.load_all`.
 3. `new_message_interaction`, then the `given` calls.
-4. Contents via the shared body rules. `%PluginContents{}` goes through `interaction_contents(i, :request, ...)`.
+4. Contents. The runner handles `%PluginContents{}` itself, through `interaction_contents(i, :request, content_type, JSON.encode!(contents))`. Any other contents are planned with `Apply.plan_body(contents, msg.content_type, "message contents", "PactEx.Message.run/4")`, and the plan is applied with `with_body` or `with_binary_body` on `:request`. The planning, and the check that a `:content_type` option does not name a different media type than the plugin contents (a `-101` error, same rule as Task 2), happen before the first native call, so an invalid body fails without touching pact_ffi. This step only applies the result.
 5. One `with_metadata(i, k, encode(v), :request)` per metadata entry, where `encode` follows plan 1's value encoding (binary passes through, map → `JSON.encode!`).
 6. `message_reify`, then decode into `%Reified{}`. For a V4 body envelope `%{"content" => c, "contentType" => ct, "encoded" => enc}`: when `enc == "base64"`, use `Base.decode64!(c)`. When `enc` is `false` or `"json"`, use `c` as is.
 7. Call `fun.(reified)`.
@@ -469,7 +486,7 @@ Expected: FAIL with `PactEx.SyncMessage.new/1 is undefined`.
 
 The order is `new_pact`, `with_specification(:v4)`, `Plugin.load_all`, `new_sync_message_interaction`, then the `given` calls. Then either:
 - `interaction_contents(i, :request, ct, JSON.encode!(contents))` when `plugin_contents` is set, or
-- request contents via the shared body rules on `:request`, and each response on `:response`.
+- the request contents and each response planned with `Apply.plan_body/4` (entry point `"PactEx.SyncMessage.run/4"`) and applied on `:request` and `:response`. The runner handles `plugin_contents` itself, so `plan_body/4` never sees a `%PluginContents{}`.
 
 Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write with `pact_handle_write_file`, and `Plugin.cleanup` in `after`. The transport path comes in Task 5. Until then, if `transport` is set, raise `ArgumentError, "transport support lands in Task 5"`. Task 5 removes that line.
 
