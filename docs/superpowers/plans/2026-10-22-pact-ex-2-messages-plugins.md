@@ -10,7 +10,7 @@
 - `PactEx.Message` (async) and `PactEx.SyncMessage` are pure builders. Each has a `run/4` that creates a fresh FFI pact, loads plugins, applies the interaction, hands the reified contents to the test function, and writes the pact.
 - `PactEx.Plugin.contents/2` produces a `%PactEx.PluginContents{}` value. It works as a body in HTTP interactions, async messages and sync messages.
 
-**Tech Stack:** Plan 1 stack, plus the protobuf plugin 0.8.1. Test only: `grpc` ~> 1.0 and `protobuf` ~> 0.17.
+**Tech Stack:** Plan 1 stack, plus the protobuf plugin 0.8.1. Test only: `grpc` ~> 1.0, `protobuf` ~> 0.17 and `gun` ~> 2.2 (the default adapter of the grpc client; see the Task 5 spike note).
 
 **Spec:** `docs/superpowers/specs/2026-10-22-pact-ex-design.md`
 
@@ -448,7 +448,7 @@ git commit -m "feat: add synchronous message consumer"
 
 **Files:**
 - Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules)
-- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}` and `{:protobuf, "~> 0.17", only: :test}`), `lib/pact_ex/sync_message/runner.ex`, `test/pact_ex/plugin_test.exs` (remove `@tag :skip`)
+- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.2", only: :test}`; no `test_helper.exs` change), `lib/pact_ex/sync_message/runner.ex`, `test/pact_ex/plugin_test.exs` (remove `@tag :skip`)
 - Test: `test/acceptance/grpc_consumer_test.exs`
 
 **Interfaces:**
@@ -548,12 +548,22 @@ end
 - pact-plugin-driver 1.2.6 (`src/plugin_manager.rs:774-830`) returns `[]` when `ok` is true and otherwise returns all results, including routes that matched. pact_mock_server 2.2.6 (`src/server_manager.rs:536-558`, `560-603`) uses `[] == matched` and turns each result into `{"path","error","mismatches":[{expected,actual,mismatch,path,diff}]}`. `PactEx.MismatchError` prints that as `path: error` plus each `mismatch` text, and `PactEx.Consumer.verdict/2` gives `{:error, %PactEx.Error{code: -102}}` only when it is not matched and the list is empty (an RPC failure to the plugin).
 - Consequences for the code in this task: when one of several routes fails, the error lists every route. The ones that matched appear as a bare path with no error text. The plugin records a result only when it can compare the request (`src/mock_service.rs:83-96`). A request it cannot compare is answered with `FAILED_PRECONDITION` or `INVALID_ARGUMENT` and not recorded, so that route shows as "Did not receive any requests".
 
+**How the grpc 1.0 client is set up (spike S2, read from the hex packages `grpc` 1.0.5 and `grpc_core` 1.0.5; not run).** The test code above needs no extra setup beyond the three deps.
+- `grpc` 1.0 is split into `grpc` (client), `grpc_core` (`GRPC.Service`, `GRPC.RPCError`, `GRPC.Status`) and `grpc_server`. `grpc` depends on `grpc_core`, which depends on `protobuf ~> 0.17` and `jason`. `~> 0.17` resolves to 0.17.1 (`grpc_core` `mix.exs:31`). We only need the client.
+- `GRPC.Client.Supervisor` and `GRPC.Client.Registry` are started by the `:grpc` application itself (`grpc/lib/grpc/client/application.ex`, `mod: {GRPC.Client.Application, []}` in `grpc/mix.exs:24-27`). Do not start them in `test_helper.exs`. The grpc README says to start a supervisor by hand, but `GRPC.Client.Supervisor` is already registered, so a second `DynamicSupervisor.start_link(name: GRPC.Client.Supervisor)` returns `{:error, {:already_started, pid}}`.
+- The default adapter is `GRPC.Client.Adapters.Gun` (`grpc/lib/grpc/client/connection.ex:976,992`). `gun` and `mint` are `optional: true` in `grpc`, so a project must list one. We list `{:gun, "~> 2.2"}`: `grpc` 1.0.0 needs `~> 2.2.0` and 1.0.5 needs `~> 2.4.0` (`grpc/mix.exs:34` in both). With `~> 1.0` this resolves to `grpc` 1.0.5 and `gun` 2.4.1. `castore` is only needed for TLS, which these tests do not use.
+- `GRPC.Stub.connect/2` takes a target string, and `"127.0.0.1:<port>"` is valid. With no scheme it is rewritten to `ipv4:127.0.0.1:<port>`, insecure, with no DNS lookup (`connection.ex:1094-1104`). It blocks until the connection is ready, and returns `{:ok, %GRPC.Channel{}}` (`connection.ex:269-309`).
+- `GRPC.Stub.disconnect/1` still exists and takes the channel (`stub.ex:268`).
+- `GRPC.RPCError.status` is still an integer: `5` for NOT_FOUND. `GRPC.RPCError.exception(status: :not_found)` also accepts an atom, but converts it to the integer (`grpc_core/lib/grpc/rpc_error.ex`). The Gun adapter builds the error from the `grpc-status` trailer, and also for a trailers-only response, which is what a tonic `Status` error sends (`grpc/lib/grpc/client/adapters/gun.ex:191-200, 487-505`). So the NOT_FOUND test matches `{:error, %GRPC.RPCError{status: 5}}`.
+- The generated-code API is unchanged for our handwritten modules: `use GRPC.Service, name: "routeguide.RouteGuide"` (allowed options: `:name`, `:protoc_gen_elixir_version`), `rpc :GetFeature, Req, Res`, `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, which defines `get_feature/2,3` (`stub.ex:49-162`).
+- Open points: the locked `gun` 2.4.1 carries advisory GHSA-w4f7-4cxr-rv3c (HTTP request/response splitting; `mix deps.get` prints it). `grpc` 1.0.5 pins `gun ~> 2.4.0`, so we cannot move to a fixed gun. The risk is limited to a test-only client talking to `127.0.0.1`. `GRPC.Client.Adapters.Mint` with `{:mint, "~> 1.9"}` is the alternative if that matters. We did not run the client against the plugin mock server (it needs plain HTTP/2 without TLS, which the Gun adapter uses by default).
+
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `scripts/install-protobuf-plugin.sh && mix test test/acceptance/grpc_consumer_test.exs`
 Expected: FAIL with `ArgumentError: transport support lands in Task 5` (the `Routeguide` modules are not defined yet, so compilation fails first. Create the empty file in Step 3 before re-running).
 
-- [ ] **Step 3: Write `test/support/route_guide.ex`** with `use Protobuf, syntax: :proto3`, `use GRPC.Service` and `use GRPC.Stub`, with the fields and RPC listed in Interfaces. Package `routeguide`.
+- [ ] **Step 3: Write `test/support/route_guide.ex`** with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`.
 
 - [ ] **Step 4: Implement the transport branch of `SyncMessage.run/4`**
 
