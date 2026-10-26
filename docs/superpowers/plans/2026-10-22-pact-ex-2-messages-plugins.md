@@ -515,7 +515,7 @@ Expected: FAIL. The test file does not compile: it matches on `%Message.Reified{
 3. `new_message_interaction`, then the `given` calls.
 4. Contents. The runner handles `%PluginContents{}` itself, through `interaction_contents(i, :request, content_type, JSON.encode!(contents))`. Any other contents are planned with `Apply.plan_body(contents, msg.content_type, "message contents", "PactEx.Message.run/4")`, and the plan is applied with `with_body` or `with_binary_body` on `:request`. The planning, and the check that a `:content_type` option does not name a different media type than the plugin contents (a `-101` error, same rule as Task 2), happen before the first native call, so an invalid body fails without touching pact_ffi. This step only applies the result.
 5. One `with_metadata(i, k, JSON.encode!(v), :request)` per metadata entry. Every value is JSON-encoded, strings included. `pactffi_with_metadata` parses each value as JSON first and falls back to a string only on failure, so a raw `"5"`, `"true"` or `"null"` would become a number, a boolean and null. Encoded, the string `5` is sent as the JSON text `"5"` (with quotes) and stays a string. Matcher maps are encoded the same way. Metadata is applied after the contents (step 4) because `pactffi_interaction_contents` replaces the metadata of an async message, so plugin contents would wipe it otherwise.
-6. `message_reify`, then decode into `%Reified{}`. A bare `"null"` result has no envelope: decode it to `%Reified{contents: nil, metadata: %{}, content_type: nil}`. `with_body` never makes a Null body, so no test can reach this branch. It is defensive, so that a body made another way does not crash the decoding. For a V4 body envelope `%{"content" => c, "contentType" => ct, "encoded" => enc}`: when `enc == "base64"`, use `Base.decode64!(c)`. When `enc` is `false` or `"json"`, use `c` as is.
+6. `message_reify`, then decode into `%Reified{}`. A bare `"null"` result has no envelope: decode it to `%Reified{contents: nil, metadata: %{}, content_type: nil}`. `with_body` never makes a Null body, so no test can reach this branch. It is defensive, so that a body made another way does not crash the decoding. For a V4 body envelope `%{"content" => c, "contentType" => ct, "encoded" => enc}`: when `enc == "base64"`, use `Base.decode64!(c)`. When `enc` is `false` or `"json"`, use `c` as is. An empty body has the envelope `%{"content" => ""}`, without `contentType` or `encoded` (`OptionalBody::Empty` in `pact_models` `bodies.rs:176`): decode it to `""` with a `nil` content type. Async reify never returns it (it returns `""` instead), but sync messages share this decoding (Task 4), so it must not crash there.
 7. Call `fun.(reified)`.
 8. On normal return, `pact_handle_write_file(pact_ref, pact_dir, false)`.
 9. `Plugin.cleanup(pact_ref)` in `after`.
@@ -552,7 +552,7 @@ git commit -m "feat: add async message consumer with pact_erlang parity suite"
   - `PactEx.SyncMessage.will_respond_with(sm, contents, opts \\ []) :: t()` appends to `responses`, with the opt `content_type`.
   - `PactEx.SyncMessage.with_plugin_contents(sm, PluginContents.t()) :: t()` sets the whole request/response definition through the plugin, as pact-go `WithContents` does.
   - `%PactEx.SyncMessage.Generated{request: term(), responses: [term()], transport: %{port: pos_integer(), url: String.t()} | nil}`
-  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), and when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule).
+  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule), and when there is no `plugin_contents` and a response is `nil` or `""`. Why the responses: each `with_body` on `:response` appends one response (`pactffi_with_body`, `handles.rs:1952`), so a `nil` response, which plans to no body and no call, would be dropped without a word and `fun` would get one response fewer. A `""` response becomes an empty body that no provider can be checked against.
   - `PactEx.SyncMessage.run!(...) :: :ok`
 
 - [ ] **Step 1: Write the failing tests**
@@ -605,6 +605,18 @@ defmodule PactEx.SyncMessageTest do
     end
   end
 
+  test "an empty response is rejected before any native call", %{tmp_dir: dir} do
+    pact = PactEx.new("sync-consumer", "sync-provider", pact_dir: dir)
+    sm = SyncMessage.new("get user") |> SyncMessage.with_request(%{"id" => 1})
+
+    for empty <- [nil, ""] do
+      sm = sm |> SyncMessage.will_respond_with(%{"name" => "Ann"}) |> SyncMessage.will_respond_with(empty)
+
+      assert {:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}} =
+               SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
+    end
+  end
+
   test "plugin contents in a pact without plugins are rejected before any native call", %{tmp_dir: dir} do
     pact = PactEx.new("sync-consumer", "sync-provider", pact_dir: dir)
     sm = SyncMessage.new("plugin") |> SyncMessage.with_plugin_contents(PactEx.Plugin.contents("application/protobuf", %{"a" => 1}))
@@ -622,7 +634,7 @@ Expected: FAIL. The test file does not compile: it matches on `%SyncMessage.Gene
 
 - [ ] **Step 3: Implement `PactEx.SyncMessage` and its runner for `transport: nil`**
 
-First check `pact.spec == :v4`. When `plugin_contents` is not set, check that the request is neither `nil` nor `""`. When it is set, check that `pact.plugins` is not empty. If a check fails, return `{:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}}` before any native call. The runner never overrides `pact.spec`: the shape of the generated contents depends on it, and the pact file would not match what the caller asked for. The order after that is `new_pact`, `with_specification(pact.spec)`, `Plugin.load_all`, `new_sync_message_interaction`, then the `given` calls. Then either:
+First check `pact.spec == :v4`. When `plugin_contents` is not set, check that the request and every response are neither `nil` nor `""`. When it is set, check that `pact.plugins` is not empty. If a check fails, return `{:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}}` before any native call. The runner never overrides `pact.spec`: the shape of the generated contents depends on it, and the pact file would not match what the caller asked for. The order after that is `new_pact`, `with_specification(pact.spec)`, `Plugin.load_all`, `new_sync_message_interaction`, then the `given` calls. Then either:
 - `interaction_contents(i, :request, ct, JSON.encode!(contents))` when `plugin_contents` is set, or
 - the request contents and each response planned with `Apply.plan_body/4` (entry point `"PactEx.SyncMessage.run/4"`) and applied on `:request` and `:response`. The runner handles `plugin_contents` itself, so `plan_body/4` never sees a `%PluginContents{}`.
 
@@ -631,7 +643,7 @@ Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `mix test test/pact_ex/sync_message_test.exs`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
