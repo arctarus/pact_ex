@@ -861,7 +861,7 @@ git commit -m "test: cover protobuf async messages via the plugin"
 ### Task 7: CI and docs for messages and plugins
 
 **Files:**
-- Modify: `.github/workflows/ci.yml`, `README.md`, `CHANGELOG.md`
+- Modify: `.github/workflows/ci.yml`, `README.md`, `CHANGELOG.md`, `mix.exs`
 
 **Interfaces:**
 - Consumes: everything above.
@@ -899,14 +899,25 @@ It also says this about auto-install, in plain words:
 
 Update the parity table rows for plan 2.
 
-- [ ] **Step 3: Verify**
+- [ ] **Step 3: Bump the version**
+
+Set `@version "0.2.0"` in `mix.exs` and add a `0.2.0` section to `CHANGELOG.md`: async messages, sync messages, Pact plugins and the gRPC transport. This is step 1 of `RELEASING.md`. Why a new version: users download a precompiled NIF that matches the package version. The 0.1.0 files do not contain the new NIFs (`using_plugin`, `message_reify` and the others from Task 1), so 0.2.0 needs its own 12 build artifacts and its own checksums. CI builds from source (`PACT_EX_BUILD`), so it does not need those files yet.
+
+- [ ] **Step 4: Verify**
 
 Run: `mix test && mix format --check-formatted && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy -- -D warnings)`
 Expected: all green, with plugin tests included when the plugin is installed.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add -A
 git commit -m "ci: run plugin tests and document messages and plugins"
 ```
+
+- [ ] **Step 6: Release (after the commit is on `main`)**
+
+Follow `RELEASING.md`. Do not copy its steps here, and do not tag before CI has passed on `main`:
+- The pull request touches `native/**` and `mix.exs`, so it starts the release dry run (`RELEASING.md`, "Dry run"). Check that it passes before merging.
+- After the merge, do steps 2 to 6: wait for CI on `main`, tag `v0.2.0` (the tag must match `@version`), wait for the 12 build jobs and `publish`, generate and commit `checksum-Elixir.PactEx.Native.exs` with `mix rustler_precompiled.download PactEx.Native --all --print`, inspect the package with `mix hex.build --unpack`, then `mix hex.publish`.
+- The checksum file must be committed and pushed before `mix hex.publish`, because Hex ships it.
