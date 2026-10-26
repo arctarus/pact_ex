@@ -9,6 +9,9 @@ defmodule PactEx.MismatchError do
     * `"request-not-found"` - a request arrived that no interaction expects.
     * `"request-mismatch"` - a request matched a path and method but not the
       rest. Its `"mismatches"` key lists the differences.
+
+  A mock server provided by a plugin reports mismatches with `"path"`,
+  `"error"` and `"mismatches"` keys, and no `"type"` or `"method"`.
   """
 
   defexception mismatches: []
@@ -30,6 +33,8 @@ defmodule PactEx.MismatchError do
       |> Enum.reject(&is_nil/1)
       |> Enum.join(" ")
 
+    head = with_error(head, Map.get(mismatch, "error"))
+
     details =
       mismatch
       |> Map.get("mismatches", [])
@@ -41,4 +46,12 @@ defmodule PactEx.MismatchError do
 
     "  - " <> head <> Enum.join(details)
   end
+
+  # Mismatches from a plugin mock server have no "type" or "method". Their
+  # "error" is often the only explanation, so show it after the path. The
+  # plugin driver always sends it, as "" when there is no error.
+  defp with_error(head, ""), do: head
+  defp with_error(head, error) when is_binary(error) and head != "", do: head <> ": " <> error
+  defp with_error(_head, error) when is_binary(error), do: error
+  defp with_error(head, _error), do: head
 end

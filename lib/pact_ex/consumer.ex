@@ -106,7 +106,10 @@ defmodule PactEx.Consumer do
       or an unexpected one did. Nothing is written.
     * `{:error, %PactEx.Error{}}` - the server could not start, an interaction
       is invalid, or the pact file could not be written. `fun` does not run
-      when the server cannot start.
+      when the server cannot start. It is also returned, with code `-102`,
+      when the server reports a failed match without any mismatch details, for
+      example a plugin mock server that failed to answer or a server that `fun`
+      already stopped. Nothing is written.
   """
   @spec run(Pact.t(), [Interaction.t()], (MockServer.t() -> any()), keyword()) ::
           :ok | {:error, MismatchError.t() | Error.t()}
@@ -185,12 +188,35 @@ defmodule PactEx.Consumer do
   end
 
   defp finish(mock) do
-    if MockServer.matched?(mock) do
-      MockServer.write_pact(mock, overwrite: false)
-    else
-      {:error, %MismatchError{mismatches: MockServer.mismatches(mock)}}
+    matched? = MockServer.matched?(mock)
+    mismatches = if matched?, do: [], else: MockServer.mismatches(mock)
+
+    case verdict(matched?, mismatches) do
+      :match -> MockServer.write_pact(mock, overwrite: false)
+      {:error, _error} = error -> error
     end
   end
+
+  # A failed match with no mismatches is not a contract mismatch. A plugin
+  # mock server that fails to answer looks like this, and so does a server
+  # that `fun` already stopped (an unknown port is never "matched").
+  @doc false
+  @spec verdict(boolean(), [map()]) :: :match | {:error, MismatchError.t() | Error.t()}
+  def verdict(true, _mismatches), do: :match
+
+  def verdict(false, []) do
+    {:error,
+     %Error{
+       function: "PactEx.Consumer.run/4",
+       code: -102,
+       message:
+         "the mock server reported a failed match without mismatch details, for example " <>
+           "a plugin mock server that failed to answer or a server that was already " <>
+           "stopped. Nothing was written."
+     }}
+  end
+
+  def verdict(false, mismatches), do: {:error, %MismatchError{mismatches: mismatches}}
 
   defp validate_all(interactions), do: Apply.each_ok(interactions, &Apply.validate/1)
 

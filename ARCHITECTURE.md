@@ -163,7 +163,8 @@ end)
 6. **Exercise.** Your function talks to `mock.url`.
 7. **Verify and write.** `MockServer.matched?/1`:
    - matched: `MockServer.write_pact/2` writes `<consumer>-<provider>.json` in merge mode;
-   - not matched: `run/4` reads the mismatches into a `PactEx.MismatchError`.
+   - not matched: `run/4` reads the mismatches into a `PactEx.MismatchError`;
+   - not matched, with no mismatch details (a plugin mock server that failed to answer, or a server `fun` already stopped): `run/4` returns a `PactEx.Error` with code `-102` and writes nothing.
 8. **Stop.** `MockServer.stop/1` runs last, because the mock server owns the mismatches JSON and frees it on cleanup.
 
 ### Provider workflow

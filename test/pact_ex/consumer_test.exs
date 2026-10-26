@@ -2442,6 +2442,30 @@ defmodule PactEx.ConsumerTest do
     assert Path.basename(to_string(location[:file])) == "consumer_test.exs"
   end
 
+  describe "verdict/2" do
+    test "is :match when the server matched" do
+      assert :match = Consumer.verdict(true, [])
+    end
+
+    test "is a MismatchError when the server did not match and reported mismatches" do
+      mismatches = [%{"type" => "missing-request", "method" => "GET", "path" => "/never"}]
+
+      assert {:error, %PactEx.MismatchError{mismatches: ^mismatches}} =
+               Consumer.verdict(false, mismatches)
+    end
+
+    test "is a PactEx.Error when the server did not match and reported nothing" do
+      assert {:error,
+              %PactEx.Error{function: "PactEx.Consumer.run/4", code: -102, message: message}} =
+               Consumer.verdict(false, [])
+
+      assert message =~ "without mismatch details"
+      assert message =~ "plugin mock server that failed to answer"
+      assert message =~ "already stopped"
+      assert message =~ "Nothing was written"
+    end
+  end
+
   describe "start_mock_server/3" do
     test "low-level API: start, matched?, mismatches, write_pact, stop", %{
       pact: pact,
