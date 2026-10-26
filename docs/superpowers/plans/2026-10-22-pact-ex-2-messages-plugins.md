@@ -56,7 +56,7 @@
   - `message_reify(interaction) :: {:ok, String.t()} | {:error, map()}` (DirtyIo)
   - `sync_message_generate_contents(interaction) :: {:ok, String.t()} | {:error, map()}` (DirtyIo)
   - `pact_handle_write_file(pact, dir :: String.t(), overwrite :: boolean()) :: :ok | {:error, map()}` (DirtyIo)
-  - `using_plugin(pact, name :: String.t(), version :: String.t() | nil) :: :ok | {:error, map()}` (DirtyIo). Every error message starts with the plugin name and version, `"<name> <version>: <pact_ffi message>"` (just `"<name>: ..."` when the version is `nil`), for example `"protobuf 0.8.1: Plugin directory ... does not exist"`. The driver's own message does not always name the plugin. When the plugins of this pact were already cleaned up it returns, without calling pact_ffi, `{:error, %{function: "pactffi_using_plugin", code: 2, message: "<name> <version>: the plugins of this pact were already cleaned up"}}`. The cleanup flag is one-way: a plugin loaded after it would never be cleaned up and would leak its process.
+  - `using_plugin(pact, name :: String.t(), version :: String.t() | nil) :: :ok | {:error, map()}` (DirtyIo). Every error message starts with the plugin name and version, `"<name> <version>: <pact_ffi message>"` (just `"<name>: ..."` when the version is `nil`), for example `"protobuf 0.8.1: Could not load plugin - Plugin directory ... does not exist"`. pact_ffi adds the `Could not load plugin - ` prefix to the driver's message (`plugins/mod.rs:101`). The driver's own message does not always name the plugin. When the plugins of this pact were already cleaned up it returns, without calling pact_ffi, `{:error, %{function: "pactffi_using_plugin", code: 2, message: "<name> <version>: the plugins of this pact were already cleaned up"}}`. The cleanup flag is one-way: a plugin loaded after it would never be cleaned up and would leak its process.
   - `interaction_contents(interaction, part :: :request | :response, content_type :: String.t(), contents_json :: String.t()) :: :ok | {:error, map()}` (DirtyIo)
   - `cleanup_plugins(pact) :: boolean()` (DirtyIo, inside `on_large_stack`: the plugin driver may `block_on` and kill a plugin process). It calls `PactResource::cleanup_plugins_once`, so it is safe to call more than once. It returns `true` when this call did the cleanup and `false` when an earlier call (or garbage collection) already had.
 
@@ -960,7 +960,7 @@ The Plugins section says how to install a plugin:
 
 It also says this about auto-install, in plain words:
 - A plugin that is not installed is downloaded from the pact-plugins index on GitHub when the test runs, so that run needs network access.
-- Offline, a missing plugin fails with an error that starts with the plugin name and version. The rest is the driver's message: `was not found`, or `Plugin directory "..." does not exist` when there is no plugin directory at all.
+- Offline, a missing plugin fails with an error that starts with the plugin name and version. The rest is `Could not load plugin - ` and the driver's message: `Plugin ... was not found`, or `Plugin directory "..." does not exist` when there is no plugin directory at all.
 - The download has no timeout. On a network that drops packets, a test that loads a plugin can hang, and the driver holds its plugin lock meanwhile.
 - Each plugin load takes at least 500 ms.
 

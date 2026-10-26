@@ -59,7 +59,7 @@ Important:
 
 Minor:
 
-- [ ] **plan** The `using_plugin` error message is `"<name> <version>: Could not load plugin - <driver message>"` (`plugins/mod.rs:101`). Fix the example in Task 1 and the README text in Task 7.
+- [x] **plan** The `using_plugin` error message is `"<name> <version>: Could not load plugin - <driver message>"` (`plugins/mod.rs:101`). Fix the example in Task 1 and the README text in Task 7.
 - [ ] **plan** pact_models never writes `"encoded": "json"`, only `false` or `"base64"` (`bodies.rs:145-160`). A text body with a JSON content type that is not valid JSON is written as base64, so `Reified.contents` is raw bytes there. Document it and test it.
 - [ ] **plan** The Task 1 test "reifies with generators applied" has no generator. Rename it.
 - [ ] **plan** `Message.run/4` takes `opts` but defines none. Say that it takes none yet and raises on any.
