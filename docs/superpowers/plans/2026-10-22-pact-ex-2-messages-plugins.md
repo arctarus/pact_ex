@@ -245,7 +245,7 @@ git commit -m "feat(native): add message, sync message and plugin NIFs"
   - Plugin contents and an explicit content type: the `content_type` of the `%PluginContents{}` wins. An explicit `:content_type` option or a Content-Type header on the same part that names a different media type (compared case-insensitively, ignoring parameters) is a `-101` error naming the entry point. One that names the same media type is accepted.
   - `Apply.plan_body/4` (used by messages in Tasks 3 and 4) is not given `%PluginContents{}`: the message runners handle it before they call it.
   - Plugin contents need a plugin in the pact. `start_mock_server/3` returns a `-101` `%PactEx.Error{function: "PactEx.Consumer.start_mock_server/3"}`, before any native call, when an interaction has a `%PluginContents{}` body and `pact.plugins == []`. The message runners make the same check (Tasks 3 and 4). Why: the driver finds content matchers in a global catalogue (`catalogue_manager.rs:379`). If another pact in the VM loaded the plugin, `interaction_contents` works anyway and records the plugin in this pact. Cleaning up this pact then calls `drop_plugin_access` for an access it never added, which shuts down the plugin while the other pact still uses it. The check does not catch plugin contents for a plugin other than the ones listed, because the pact does not know which content types a plugin handles before it loads it.
-  - `start_mock_server/3` calls `Plugin.load_all/2` before applying interactions. On any later failure it calls `Plugin.cleanup/1` before returning the error. `MockServer.stop/1` calls `Plugin.cleanup(pact_ref)` after `cleanup_mock_server`. `stop/1` stays idempotent because the cleanup is exactly-once.
+  - `start_mock_server/3` calls `Plugin.load_all/2` before applying interactions. Once `new_pact` has returned, every way out other than `{:ok, mock}` calls `Plugin.cleanup/1` first: an error from `load_all` itself (the first plugin loaded, the second failed), from applying the interactions or from `create_mock_server`, and an exception such as the `ArgumentError` a NUL byte in an interaction description raises. Wrap that part in `try`/`rescue`/`catch` that cleans up and re-raises, or track success in a variable and clean up in `after` when it is not set. Garbage collection would clean up later, but the Global Constraints require a prompt cleanup. `MockServer.stop/1` calls `Plugin.cleanup(pact_ref)` after `cleanup_mock_server`. `stop/1` stays idempotent because the cleanup is exactly-once.
   - No `transport` option on `PactEx.Consumer`. Nothing in plan 2 needs one: gRPC goes through `SyncMessage.run/4`, and `MockServer.build_url/2` builds `http://` URLs only. `start_mock_server/3` keeps passing `"http"` to `create_mock_server`.
 
 - [ ] **Step 1: Write the install script and test helper exclusion**
@@ -767,7 +767,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
 end
 ```
 
-The test moved from Task 2, a protobuf body in an HTTP response. It only needs Task 2 and the `Routeguide` modules, so it passes in Step 3 already:
+The test moved from Task 2, a protobuf body in an HTTP response, and a test of the Task 2 cleanup when a second plugin fails to load. They only need Task 2 and the `Routeguide` modules, so they pass in Step 3 already:
 
 ```elixir
 # test/acceptance/protobuf_http_test.exs
@@ -798,6 +798,20 @@ defmodule PactEx.Acceptance.ProtobufHttpTest do
                assert %Routeguide.Feature{name: "Big Tree"} = Routeguide.Feature.decode(resp.body)
              end)
   end
+
+  test "a second plugin that fails to load cleans up the first one", %{tmp_dir: dir} do
+    pact =
+      PactEx.new("plugin-http-consumer", "plugin-http-provider", pact_dir: dir)
+      |> PactEx.using_plugin("protobuf", "0.8.1")
+      |> PactEx.using_plugin("pact-ex-no-such-plugin", "9.9.9")
+
+    i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200)
+
+    assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}} = Consumer.start_mock_server(pact, [i])
+    # Without the explicit cleanup the protobuf plugin would run until the
+    # test process happens to garbage-collect the pact. Poll for up to 5 s.
+    assert Enum.any?(1..50, fn _ -> Process.sleep(100); System.cmd("pgrep", ["-f", "pact-protobuf-plugin"]) |> elem(1) == 1 end)
+  end
 end
 ```
 
@@ -825,7 +839,7 @@ Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/su
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `scripts/install-protobuf-plugin.sh && mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`
-Expected: the 4 gRPC tests FAIL with the `ArgumentError: transport support lands in Task 5` that Task 4 raises. The protobuf HTTP test PASSES.
+Expected: the 4 gRPC tests FAIL with the `ArgumentError: transport support lands in Task 5` that Task 4 raises. The 2 protobuf HTTP tests PASS.
 
 - [ ] **Step 4: Implement the transport branch of `SyncMessage.run/4`**
 
@@ -841,7 +855,7 @@ The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`
-Expected: PASS (4 + 1 tests).
+Expected: PASS (4 + 2 tests).
 
 - [ ] **Step 6: Commit**
 
