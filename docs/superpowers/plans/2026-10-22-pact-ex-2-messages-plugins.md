@@ -245,7 +245,7 @@ git commit -m "feat(native): add message, sync message and plugin NIFs"
   - Plugin contents and an explicit content type: the `content_type` of the `%PluginContents{}` wins. An explicit `:content_type` option or a Content-Type header on the same part that names a different media type (compared case-insensitively, ignoring parameters) is a `-101` error naming the entry point. One that names the same media type is accepted.
   - `Apply.plan_body/4` (used by messages in Tasks 3 and 4) is not given `%PluginContents{}`: the message runners handle it before they call it.
   - `start_mock_server/3` calls `Plugin.load_all/2` before applying interactions. On any later failure it calls `Plugin.cleanup/1` before returning the error. `MockServer.stop/1` calls `Plugin.cleanup(pact_ref)` after `cleanup_mock_server`. `stop/1` stays idempotent because the cleanup is exactly-once.
-  - A new `transport` option in `start_mock_server/3` and `run/4`, with default `"http"`.
+  - No `transport` option on `PactEx.Consumer`. Nothing in plan 2 needs one: gRPC goes through `SyncMessage.run/4`, and `MockServer.build_url/2` builds `http://` URLs only. `start_mock_server/3` keeps passing `"http"` to `create_mock_server`.
 
 - [ ] **Step 1: Write the install script and test helper exclusion**
 
