@@ -47,7 +47,7 @@
 - Produces (Elixir NIFs in `PactEx.Native`):
   - `new_message_interaction(pact, description :: String.t()) :: reference()` (DirtyIo)
   - `new_sync_message_interaction(pact, description :: String.t()) :: reference()` (DirtyIo)
-  - `with_metadata(interaction, key :: String.t(), value :: String.t(), part :: :request | :response) :: :ok | {:error, map()}` (DirtyIo)
+  - `with_metadata(interaction, key :: String.t(), value :: String.t(), part :: :request | :response) :: :ok | {:error, map()}` (DirtyIo). `value` is JSON text: `pactffi_with_metadata` parses it as JSON and falls back to a plain string only if that fails.
   - `message_reify(interaction) :: {:ok, String.t()} | {:error, map()}` (DirtyIo)
   - `sync_message_generate_contents(interaction) :: {:ok, String.t()} | {:error, map()}` (DirtyIo)
   - `pact_handle_write_file(pact, dir :: String.t(), overwrite :: boolean()) :: :ok | {:error, map()}` (DirtyIo)
@@ -74,7 +74,7 @@ defmodule PactEx.Native.MessagesTest do
     i = Native.new_message_interaction(pact, "a weather message")
     :ok = Native.given(i, "weather available")
     :ok = Native.with_body(i, :request, "application/json", ~s({"temp": {"pact:matcher:type": "type", "value": 23.0}}))
-    :ok = Native.with_metadata(i, "queue", "weather", :request)
+    :ok = Native.with_metadata(i, "queue", JSON.encode!("weather"), :request)
 
     assert {:ok, json} = Native.message_reify(i)
     reified = JSON.decode!(json)
@@ -372,6 +372,19 @@ defmodule PactEx.MessageTest do
     assert [%{"name" => "weather data for animals", "params" => %{"weather" => "cold"}}] = written["providerStates"]
   end
 
+  test "string metadata keeps its type", %{pact: pact} do
+    msg =
+      Message.new("metadata types")
+      |> Message.with_contents(%{"a" => 1})
+      |> Message.with_metadata(%{"partition" => "5", "flag" => "true"})
+
+    assert :ok =
+             Message.run(pact, msg, fn %Message.Reified{metadata: metadata} ->
+               assert metadata["partition"] == "5"
+               assert metadata["flag"] == "true"
+             end)
+  end
+
   test "an exception in the handler writes nothing and re-raises", %{pact: pact, tmp_dir: dir} do
     msg = Message.new("boom") |> Message.with_contents(%{"a" => 1})
     assert_raise RuntimeError, "boom", fn -> Message.run(pact, msg, fn _ -> raise "boom" end) end
@@ -404,7 +417,7 @@ Expected: FAIL with `PactEx.Message.new/1 is undefined`.
 2. `Plugin.load_all`.
 3. `new_message_interaction`, then the `given` calls.
 4. Contents. The runner handles `%PluginContents{}` itself, through `interaction_contents(i, :request, content_type, JSON.encode!(contents))`. Any other contents are planned with `Apply.plan_body(contents, msg.content_type, "message contents", "PactEx.Message.run/4")`, and the plan is applied with `with_body` or `with_binary_body` on `:request`. The planning, and the check that a `:content_type` option does not name a different media type than the plugin contents (a `-101` error, same rule as Task 2), happen before the first native call, so an invalid body fails without touching pact_ffi. This step only applies the result.
-5. One `with_metadata(i, k, encode(v), :request)` per metadata entry, where `encode` follows plan 1's value encoding (binary passes through, map → `JSON.encode!`).
+5. One `with_metadata(i, k, JSON.encode!(v), :request)` per metadata entry. Every value is JSON-encoded, strings included. `pactffi_with_metadata` parses each value as JSON first and falls back to a string only on failure, so a raw `"5"`, `"true"` or `"null"` would become a number, a boolean and null. Encoded, the string `5` is sent as the JSON text `"5"` (with quotes) and stays a string. Matcher maps are encoded the same way. Metadata is applied after the contents (step 4) because `pactffi_interaction_contents` replaces the metadata of an async message, so plugin contents would wipe it otherwise.
 6. `message_reify`, then decode into `%Reified{}`. For a V4 body envelope `%{"content" => c, "contentType" => ct, "encoded" => enc}`: when `enc == "base64"`, use `Base.decode64!(c)`. When `enc` is `false` or `"json"`, use `c` as is.
 7. Call `fun.(reified)`.
 8. On normal return, `pact_handle_write_file(pact_ref, pact_dir, false)`.
@@ -415,7 +428,7 @@ An exception from `fun` propagates without writing.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
 
