@@ -20,7 +20,7 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
   - `invalid/1` hard-codes `"PactEx.Consumer.start_mock_server/3"`. Pass the entry point in, so message errors name `Message.run/4` or `SyncMessage.run/4`.
   - Code part done: `Apply.plan_body/4`.
 - [x] **plan** JSON-encode every message metadata value, strings included. `pactffi_with_metadata` parses each value as JSON first and only falls back to a string if that fails, so passing a binary through turns `"5"`, `"true"` and `"null"` into a number, a boolean and null.
-- [ ] **plan** Message spec and empty contents:
+- [x] **plan** Message spec and empty contents:
   - `pactffi_message_reify` returns the V3 shape (no `contents.content` envelope) for a pact with spec ≤ V3. Make `Message.run/4` require `:v4`.
   - Make `SyncMessage.run/4` reject a pact that isn't `:v4`, instead of silently overriding `pact.spec`.
   - A message without contents reifies to `""`, which gives a generic error with no stored message. Validate in Elixir that contents are present.
