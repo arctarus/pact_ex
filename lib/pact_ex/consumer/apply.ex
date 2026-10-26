@@ -40,6 +40,8 @@ defmodule PactEx.Consumer.Apply do
   # the pure content type and JSON helpers). `interaction/2` applies the plan.
   # `plan_body/4` is the entry for contents that have no headers (messages):
   # the same body rules, with the caller's label and entry point in errors.
+  # `plan_json/3` does the same for JSON that is not a body (provider state
+  # params, message metadata).
 
   alias PactEx.{Error, Native}
   alias PactEx.Consumer.BodyCheck
@@ -107,14 +109,26 @@ defmodule PactEx.Consumer.Apply do
          invalid("unsupported #{label}: #{inspect(body)}, expected a binary, map or list")}
       end
 
-    case result do
-      {:error, %Error{code: @invalid_code} = error} ->
-        {:error, %{error | function: entry_point}}
-
-      other ->
-        other
-    end
+    with_entry_point(result, entry_point)
   end
+
+  @doc """
+  Encodes `term` as JSON, without calling the native library.
+
+  Follows the JSON rules of a body: the encoded bytes are decoded again and an
+  object that repeats a key is an error. Use it for JSON that is not a body,
+  such as provider state params or message metadata. `label` names the value
+  in error messages and `entry_point` is the `function` of the `-101` errors.
+  """
+  @spec plan_json(term(), String.t(), String.t()) :: {:ok, String.t()} | {:error, Error.t()}
+  def plan_json(term, label, entry_point) do
+    term |> encode_json(label) |> with_entry_point(entry_point)
+  end
+
+  defp with_entry_point({:error, %Error{code: @invalid_code} = error}, entry_point),
+    do: {:error, %{error | function: entry_point}}
+
+  defp with_entry_point(other, _entry_point), do: other
 
   # -- Plan: headers and body of each part, decided before any native call ----
 
