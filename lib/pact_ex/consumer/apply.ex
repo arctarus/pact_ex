@@ -142,7 +142,7 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
-  defp plan_part(part, description, %{body: body} = struct) do
+  defp plan_part(part, description, struct) do
     with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
          :ok <- check_params(headers, "#{part} header", description),
          :ok <- check_content_type_header(headers, part, description) do
