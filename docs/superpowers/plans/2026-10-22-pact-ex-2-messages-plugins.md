@@ -244,6 +244,7 @@ git commit -m "feat(native): add message, sync message and plugin NIFs"
   - `Apply.plan_part/3` gets a `%PluginContents{}` body clause before the `is_map(body)` path. A struct is a map, so without the clause a plugin body would be JSON-encoded as a plain map during planning. `validate/1` plans both parts through `plan_part/3`, so the clause covers `validate/1` as well as `interaction/2`. It plans the body as `{:plugin, content_type, JSON.encode!(contents)}`. `Apply.interaction/2` applies the other headers first, then applies that plan with `Native.interaction_contents(i, part, content_type, json)`.
   - Plugin contents and an explicit content type: the `content_type` of the `%PluginContents{}` wins. An explicit `:content_type` option or a Content-Type header on the same part that names a different media type (compared case-insensitively, ignoring parameters) is a `-101` error naming the entry point. One that names the same media type is accepted.
   - `Apply.plan_body/4` (used by messages in Tasks 3 and 4) is not given `%PluginContents{}`: the message runners handle it before they call it.
+  - Plugin contents need a plugin in the pact. `start_mock_server/3` returns a `-101` `%PactEx.Error{function: "PactEx.Consumer.start_mock_server/3"}`, before any native call, when an interaction has a `%PluginContents{}` body and `pact.plugins == []`. The message runners make the same check (Tasks 3 and 4). Why: the driver finds content matchers in a global catalogue (`catalogue_manager.rs:379`). If another pact in the VM loaded the plugin, `interaction_contents` works anyway and records the plugin in this pact. Cleaning up this pact then calls `drop_plugin_access` for an access it never added, which shuts down the plugin while the other pact still uses it. The check does not catch plugin contents for a plugin other than the ones listed, because the pact does not know which content types a plugin handles before it loads it.
   - `start_mock_server/3` calls `Plugin.load_all/2` before applying interactions. On any later failure it calls `Plugin.cleanup/1` before returning the error. `MockServer.stop/1` calls `Plugin.cleanup(pact_ref)` after `cleanup_mock_server`. `stop/1` stays idempotent because the cleanup is exactly-once.
   - No `transport` option on `PactEx.Consumer`. Nothing in plan 2 needs one: gRPC goes through `SyncMessage.run/4`, and `MockServer.build_url/2` builds `http://` URLs only. `start_mock_server/3` keeps passing `"http"` to `create_mock_server`.
 
@@ -310,6 +311,16 @@ defmodule PactEx.PluginTest do
 
     assert :ok = PactEx.Consumer.Apply.validate(i)
   end
+
+  test "plugin contents in a pact without plugins are rejected before any native call" do
+    body = Plugin.contents("application/protobuf", %{"a" => 1})
+    i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200, body: body)
+
+    assert {:error, %PactEx.Error{function: "PactEx.Consumer.start_mock_server/3", code: -101, message: message}} =
+             Consumer.start_mock_server(PactEx.new("c", "p"), [i])
+
+    assert message =~ "PactEx.using_plugin"
+  end
 end
 ```
 
@@ -325,7 +336,7 @@ Expected: FAIL. The test file does not compile: it matches on `%PactEx.PluginCon
 - [ ] **Step 5: Run tests to verify they pass, and that plan 1 still passes**
 
 Run: `mix test`
-Expected: PASS. `plugin_test.exs` has 6 tests, and none of them needs an installed plugin.
+Expected: PASS. `plugin_test.exs` has 7 tests, and none of them needs an installed plugin.
 
 - [ ] **Step 6: Commit**
 
@@ -351,7 +362,7 @@ git commit -m "feat: add plugin loading and plugin contents for HTTP interaction
   - `PactEx.Message.with_contents(msg, contents, opts \\ []) :: t()` with the opt `content_type`. `contents` may be a map/list (JSON), a binary or a `%PluginContents{}`.
   - `PactEx.Message.with_metadata(msg, map) :: t()` merges into `metadata`.
   - `%PactEx.Message.Reified{contents: term(), metadata: map(), content_type: String.t() | nil}`. `contents` is decoded JSON for JSON content types and raw bytes otherwise, and `nil` for JSON `null` (see step 6 of the runner).
-  - `PactEx.Message.run(Pact.t(), t(), (Reified.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}`. It returns a `-101` `%PactEx.Error{function: "PactEx.Message.run/4"}`, before any native call, when `pact.spec` is not `:v4` or when the message has no contents, that is, `contents` is `nil` or `""`. `pactffi_message_reify` returns the V3 message shape for a pact with spec V3 or lower: no `contents.content` envelope, so the decoding below would be wrong. A message without contents reifies to `""`, which pact_ffi reports without a stored error message, so we check in Elixir instead. An empty string counts as no contents: `plan_body("")` gives `{:text, "text/plain", ""}`, pact_ffi turns that into an empty body, and reify returns `""` for it too.
+  - `PactEx.Message.run(Pact.t(), t(), (Reified.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}`. It returns a `-101` `%PactEx.Error{function: "PactEx.Message.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when the message has no contents, that is, `contents` is `nil` or `""`, or when the contents are a `%PluginContents{}` and `pact.plugins == []` (the Task 2 rule). `pactffi_message_reify` returns the V3 message shape for a pact with spec V3 or lower: no `contents.content` envelope, so the decoding below would be wrong. A message without contents reifies to `""`, which pact_ffi reports without a stored error message, so we check in Elixir instead. An empty string counts as no contents: `plan_body("")` gives `{:text, "text/plain", ""}`, pact_ffi turns that into an empty body, and reify returns `""` for it too.
   - `PactEx.Message.run!(...) :: :ok`
 
 - [ ] **Step 1: Write the failing tests**
@@ -424,6 +435,13 @@ defmodule PactEx.MessageTest do
     end
   end
 
+  test "plugin contents in a pact without plugins are rejected before any native call", %{pact: pact} do
+    msg = Message.new("plugin") |> Message.with_contents(PactEx.Plugin.contents("application/protobuf", %{"a" => 1}))
+
+    assert {:error, %PactEx.Error{function: "PactEx.Message.run/4", code: -101}} =
+             Message.run(pact, msg, fn _ -> flunk("the handler must not run") end)
+  end
+
   # `with_body` never makes a Null body, so this goes through the normal
   # envelope path: the content is the JSON text `null`.
   test "JSON null contents reify to nil", %{pact: pact} do
@@ -491,7 +509,7 @@ Expected: FAIL. The test file does not compile: it matches on `%Message.Reified{
 - [ ] **Step 3: Implement `PactEx.Message` and `PactEx.Message.Runner`**
 
 `run/4` does the following:
-0. Validate and plan before any native call. Check `pact.spec == :v4` and that the message has contents (not `nil` and not `""`). Then do the body planning and the plugin content-type check of step 4. Any failure returns the `-101` error from Interfaces.
+0. Validate and plan before any native call. Check `pact.spec == :v4`, that the message has contents (not `nil` and not `""`), and that `pact.plugins` is not empty when the contents are a `%PluginContents{}`. Then do the body planning and the plugin content-type check of step 4. Any failure returns the `-101` error from Interfaces.
 1. `new_pact` and `with_specification(pact.spec)`.
 2. `Plugin.load_all`.
 3. `new_message_interaction`, then the `given` calls.
@@ -507,7 +525,7 @@ An exception from `fun` propagates without writing.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`
-Expected: PASS (8 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -534,7 +552,7 @@ git commit -m "feat: add async message consumer with pact_erlang parity suite"
   - `PactEx.SyncMessage.will_respond_with(sm, contents, opts \\ []) :: t()` appends to `responses`, with the opt `content_type`.
   - `PactEx.SyncMessage.with_plugin_contents(sm, PluginContents.t()) :: t()` sets the whole request/response definition through the plugin, as pact-go `WithContents` does.
   - `%PactEx.SyncMessage.Generated{request: term(), responses: [term()], transport: %{port: pos_integer(), url: String.t()} | nil}`
-  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, and when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`).
+  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), and when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule).
   - `PactEx.SyncMessage.run!(...) :: :ok`
 
 - [ ] **Step 1: Write the failing tests**
@@ -586,6 +604,14 @@ defmodule PactEx.SyncMessageTest do
                SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
     end
   end
+
+  test "plugin contents in a pact without plugins are rejected before any native call", %{tmp_dir: dir} do
+    pact = PactEx.new("sync-consumer", "sync-provider", pact_dir: dir)
+    sm = SyncMessage.new("plugin") |> SyncMessage.with_plugin_contents(PactEx.Plugin.contents("application/protobuf", %{"a" => 1}))
+
+    assert {:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}} =
+             SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
+  end
 end
 ```
 
@@ -596,7 +622,7 @@ Expected: FAIL. The test file does not compile: it matches on `%SyncMessage.Gene
 
 - [ ] **Step 3: Implement `PactEx.SyncMessage` and its runner for `transport: nil`**
 
-First check `pact.spec == :v4`, and, when `plugin_contents` is not set, that the request is neither `nil` nor `""`. If a check fails, return `{:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}}` before any native call. The runner never overrides `pact.spec`: the shape of the generated contents depends on it, and the pact file would not match what the caller asked for. The order after that is `new_pact`, `with_specification(pact.spec)`, `Plugin.load_all`, `new_sync_message_interaction`, then the `given` calls. Then either:
+First check `pact.spec == :v4`. When `plugin_contents` is not set, check that the request is neither `nil` nor `""`. When it is set, check that `pact.plugins` is not empty. If a check fails, return `{:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}}` before any native call. The runner never overrides `pact.spec`: the shape of the generated contents depends on it, and the pact file would not match what the caller asked for. The order after that is `new_pact`, `with_specification(pact.spec)`, `Plugin.load_all`, `new_sync_message_interaction`, then the `given` calls. Then either:
 - `interaction_contents(i, :request, ct, JSON.encode!(contents))` when `plugin_contents` is set, or
 - the request contents and each response planned with `Apply.plan_body/4` (entry point `"PactEx.SyncMessage.run/4"`) and applied on `:request` and `:response`. The runner handles `plugin_contents` itself, so `plan_body/4` never sees a `%PluginContents{}`.
 
@@ -605,7 +631,7 @@ Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `mix test test/pact_ex/sync_message_test.exs`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
