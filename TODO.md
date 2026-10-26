@@ -34,7 +34,7 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
 ### Important
 
 - [x] **code** Move the builder NIFs and `PactResource::drop` off the normal schedulers (`DirtyIo`), or document the stall. They take the global `PACT_HANDLES` lock, and pact_ffi holds that lock across plugin round trips (`interaction_contents` inside `with_interaction`, `message_reify` inside `with_message`). Those round trips take seconds while the protobuf plugin compiles a `.proto`.
-- [ ] **spike** Check that protobuf plugin 0.8.1 reports requests it never received in `get_mock_server_results`. The Task 5 test "a gRPC interaction never called returns MismatchError" depends on it.
+- [x] **spike** Check that protobuf plugin 0.8.1 reports requests it never received in `get_mock_server_results`. The Task 5 test "a gRPC interaction never called returns MismatchError" depends on it.
 - [ ] **spike** Check how to set up the grpc 1.0 client in tests: whether `GRPC.Client.Supervisor` must be started in `test_helper.exs`, and which adapter dependency it needs.
 - [ ] **plan** Task 5, Step 2 expects an `ArgumentError`, but compilation fails first. Write the `Routeguide` modules before the first run. Move the Task 2 protobuf-over-HTTP test into Task 5 instead of using `@tag :skip`.
 

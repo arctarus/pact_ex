@@ -522,7 +522,14 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
 
   test "a gRPC interaction never called returns MismatchError", %{pact: pact} do
     sm = get_feature(%{"request" => %{"latitude" => "matching(number, 1)"}, "response" => %{"name" => "notEmpty('x')"}})
-    assert {:error, %PactEx.MismatchError{}} = SyncMessage.run(pact, sm, fn _ -> :ok end, transport: "grpc")
+
+    assert {:error, %PactEx.MismatchError{mismatches: [%{"path" => path, "error" => error}]} = mismatch} =
+             SyncMessage.run(pact, sm, fn _ -> :ok end, transport: "grpc")
+
+    # Confirmed in the plugin source (spike S1, see the note after this block).
+    assert path =~ "RouteGuide/GetFeature"
+    assert error =~ "Did not receive any requests for path"
+    assert Exception.message(mismatch) =~ "RouteGuide/GetFeature: Did not receive any requests"
   end
 
   test "an exception stops the server, cleans plugins and leaves no plugin process", %{pact: pact} do
@@ -533,6 +540,13 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
   end
 end
 ```
+
+**How the plugin reports a call that never came (spike S1, read from source; not run against the installed plugin).** The protobuf plugin 0.8.1 does report it, so the "never called" test above is expected to pass as written.
+- At server start the plugin registers every route as `(0 requests, no results)` (`pact-protobuf-plugin` tag `v-0.8.1`, `src/mock_server.rs:204-209`). The route key is `/<package>.<Service>/<Method>`, here `/routeguide.RouteGuide/GetFeature` (`build_grpc_route`, `src/utils.rs:624-637`).
+- `GetMockServerResults` (`src/server.rs:860-871`) builds one `MockServerResult` per route (`get_mock_server_results`, `src/server.rs:116-190`). A route with 0 requests gets `path` = the route and `error` = `"Did not receive any requests for path '<route>'"`. A route that got requests gets `error` = `""` and one `mismatches` entry per body or metadata mismatch (`path`, `mismatch`, `expected`, `actual`). The upstream test `tests/mock_server_tests.rs:49-62` asserts this message for an uncalled route.
+- `ok` is true only if every route got at least one request and none mismatched (`src/server.rs:119-124`).
+- pact-plugin-driver 1.2.6 (`src/plugin_manager.rs:774-830`) returns `[]` when `ok` is true and otherwise returns all results, including routes that matched. pact_mock_server 2.2.6 (`src/server_manager.rs:536-558`, `560-603`) uses `[] == matched` and turns each result into `{"path","error","mismatches":[{expected,actual,mismatch,path,diff}]}`. `PactEx.MismatchError` prints that as `path: error` plus each `mismatch` text, and `PactEx.Consumer.verdict/2` gives `{:error, %PactEx.Error{code: -102}}` only when it is not matched and the list is empty (an RPC failure to the plugin).
+- Consequences for the code in this task: when one of several routes fails, the error lists every route. The ones that matched appear as a bare path with no error text. The plugin records a result only when it can compare the request (`src/mock_service.rs:83-96`). A request it cannot compare is answered with `FAILED_PRECONDITION` or `INVALID_ARGUMENT` and not recorded, so that route shows as "Did not receive any requests".
 
 - [ ] **Step 2: Run tests to verify they fail**
 
