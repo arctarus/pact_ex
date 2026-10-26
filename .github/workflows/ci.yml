@@ -100,4 +100,8 @@ jobs:
           restore-keys: |
             plt-${{ runner.os }}-otp${{ steps.beam.outputs.otp-version }}-elixir${{ steps.beam.outputs.elixir-version }}-
 
+      # The test environment, as `mix precommit` uses, so test/support is
+      # checked too.
       - run: mix dialyzer --format github
+        env:
+          MIX_ENV: test

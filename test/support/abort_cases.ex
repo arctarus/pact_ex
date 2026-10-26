@@ -461,6 +461,8 @@ defmodule PactEx.AbortCases do
   end
 
   defp colliding, do: %{:root => %{"name" => "ok"}, "root" => %{"a" => "b"}}
+  # An improper list is the input under test, so Dialyzer's warning is expected.
+  @dialyzer {:nowarn_function, improper: 0}
   defp improper, do: Function.identity([1 | 2])
 
   # -- Running one case in this process ----------------------------------------
@@ -480,7 +482,7 @@ defmodule PactEx.AbortCases do
       case PactEx.Consumer.start_mock_server(pact, [kase.build.()]) do
         {:ok, mock} ->
           try do
-            _ = Req.request(mock.url <> "/x", decode_body: false, retry: false)
+            _ = Req.request(url: mock.url <> "/x", decode_body: false, retry: false)
             :ok
           after
             PactEx.MockServer.stop(mock)

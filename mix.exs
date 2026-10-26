@@ -12,6 +12,7 @@ defmodule PactEx.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
       description: "Pact contract testing for Elixir, built on the pact_ffi Rust library.",
       package: package(),
       dialyzer: [
@@ -27,6 +28,11 @@ defmodule PactEx.MixProject do
         source_ref: "v#{@version}"
       ]
     ]
+  end
+
+  # `mix precommit` runs in the test environment, because it runs `mix test`.
+  def cli do
+    [preferred_envs: [precommit: :test]]
   end
 
   def application do
@@ -46,6 +52,21 @@ defmodule PactEx.MixProject do
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  # The checks CI runs on Elixir code. The pre-push hook in .githooks runs it.
+  # It checks the formatting instead of applying it, so a push never carries
+  # files the hook changed but nobody committed.
+  defp aliases do
+    [
+      precommit: [
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "credo",
+        "dialyzer",
+        "test"
+      ]
     ]
   end
 

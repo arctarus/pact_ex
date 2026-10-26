@@ -300,12 +300,16 @@ mix deps.get
 mix test
 ```
 
-CI also runs Credo and Dialyzer. Run them locally with:
+CI also runs Credo and Dialyzer. `mix precommit` runs the Elixir checks of CI
+in one go: compile with warnings as errors, the formatter check, Credo,
+Dialyzer and the tests. To run it before every push, enable the hook in
+`.githooks` once per clone:
 
 ```sh
-mix credo
-mix dialyzer
+git config core.hooksPath .githooks
 ```
+
+`git push --no-verify` skips it for one push.
 
 ## Supported platforms
 
