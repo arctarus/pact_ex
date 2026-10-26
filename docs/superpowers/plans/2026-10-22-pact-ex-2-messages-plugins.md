@@ -251,9 +251,10 @@ git commit -m "feat(native): add message, sync message and plugin NIFs"
 
 `scripts/install-protobuf-plugin.sh` (bash, `set -euo pipefail`):
 - `VERSION=0.8.1` and `DIR="${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-$VERSION"`.
-- Map `uname -s`/`uname -m` to `linux|macos` × `x86_64|aarch64`. Map `arm64` to `aarch64`.
-- Download with `curl -fsSL` from `https://github.com/pactflow/pact-protobuf-plugin/releases/download/v-$VERSION/`: `pact-plugin.json` and `pact-protobuf-plugin-<os>-<arch>.gz`.
-- Gunzip to `$DIR/pact-protobuf-plugin` and `chmod +x` it.
+- Map `uname -s`/`uname -m` to `linux|macos` × `x86_64|aarch64`. Map `arm64` to `aarch64`. The macOS asset is named `pact-protobuf-plugin-macos-<arch>.gz`. The release also has an `osx-` alias of it, which the script does not use.
+- Download with `curl -fsSL` into a `mktemp -d` directory, from `https://github.com/pactflow/pact-protobuf-plugin/releases/download/v-$VERSION/`: `pact-plugin.json` and `pact-protobuf-plugin-<os>-<arch>.gz`, each with its published `<asset>.sha256` file (release v-0.8.1 ships one for every asset).
+- Verify each download before using it: compute its SHA-256 (`sha256sum`, or `shasum -a 256` on macOS) and compare it with the first field of the `.sha256` file. On a mismatch, print both values, exit non-zero and install nothing.
+- Only after both checks pass, move `pact-plugin.json` into `$DIR`, gunzip the binary to `$DIR/pact-protobuf-plugin` and `chmod +x` it.
 - Exit 0 without doing anything if `$DIR/pact-plugin.json` already exists.
 
 In `test/test_helper.exs`, call `ExUnit.start(exclude: if(PactEx.Plugin.installed?("protobuf", "0.8.1"), do: [], else: [:plugin]))`.
@@ -883,10 +884,14 @@ exit 1
 Add these sections:
 - Async messages, with the weather example.
 - Sync messages.
-- Plugins: installing them (the script, `PACT_PLUGIN_DIR`), auto-install (below), using them (`PactEx.using_plugin/3`, `PactEx.Plugin.contents/2`), and the gRPC example from Task 5.
+- Plugins: installing them, auto-install (below), using them (`PactEx.using_plugin/3`, `PactEx.Plugin.contents/2`), and the gRPC example from Task 5.
 - The cleanup guarantee.
 
-The Plugins section also says this about auto-install, in plain words:
+The Plugins section says how to install a plugin:
+- In a checkout of this repository: `scripts/install-protobuf-plugin.sh` (it honours `PACT_PLUGIN_DIR`).
+- As a Hex user: the package does not include `scripts/` (`files` in `mix.exs` does not list it), so the README must not point there. Install with `pact-plugin-cli install`, or with the `install-plugin.sh` that the plugin's release ships, or rely on auto-install.
+
+It also says this about auto-install, in plain words:
 - A plugin that is not installed is downloaded from the pact-plugins index on GitHub when the test runs, so that run needs network access.
 - Offline, a missing plugin fails with an error that starts with the plugin name and version. The rest is the driver's message: `was not found`, or `Plugin directory "..." does not exist` when there is no plugin directory at all.
 - The download has no timeout. On a network that drops packets, a test that loads a plugin can hang, and the driver holds its plugin lock meanwhile.

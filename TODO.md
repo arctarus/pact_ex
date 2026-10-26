@@ -40,7 +40,7 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
 
 ### Minor
 
-- [ ] **plan** `scripts/install-protobuf-plugin.sh` doesn't verify the published `.sha256` files. Release v-0.8.1 also ships an official `install-plugin.sh`. `scripts/` is not in the Hex `files`, so the README can't send Hex users there.
+- [x] **plan** `scripts/install-protobuf-plugin.sh` doesn't verify the published `.sha256` files. Release v-0.8.1 also ships an official `install-plugin.sh`. `scripts/` is not in the Hex `files`, so the README can't send Hex users there.
 - [ ] **plan** Drop the `transport` option of `PactEx.Consumer`, or justify it. `MockServer.build_url/2` always uses `http://`.
 - [x] **code** Move `arg_cstring` (`handles.rs`) and `port_arg` (`mock_server.rs`) to `args.rs`. The new message NIFs need `arg_cstring`.
 - [ ] **plan** Task 7: bump the version, then build the precompiled NIFs and their checksums for the new release.
