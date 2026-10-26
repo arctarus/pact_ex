@@ -26,7 +26,7 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
   - A message without contents reifies to `""`, which gives a generic error with no stored message. Validate in Elixir that contents are present.
   - A `Null` body reifies to `"null"`, which has no envelope. Handle that case.
 - [x] **plan** Rewrite the message end-to-end test (Task 3). `@tag :tmp_dir` gives each test its own directory, and ExUnit randomizes test order, so a shared directory where the last test asserts 4 interactions can't work. Use one directory from `setup_all` with a single test, or assertions that don't depend on order.
-- [ ] **plan** Plugin loading (decided: keep auto-install):
+- [x] **plan** Plugin loading (decided: keep auto-install):
   - `Plugin.load_all/2` (or the NIF) puts the plugin name and version at the start of the error message. Without a plugin directory, the driver says `Plugin directory "..." does not exist` without naming the plugin, so the Task 1 assertion fails on a fresh machine.
   - Document that a missing plugin is installed from the pact-plugins index at test run time, which needs network access.
   - Without network the driver falls back to its built-in index, so a missing plugin fails with "not found". Accept that the GitHub fetch has no timeout and can hang on a network that drops packets. It holds `PLUGIN_REGISTER` meanwhile. Each `using_plugin` call also sleeps a fixed 500 ms.

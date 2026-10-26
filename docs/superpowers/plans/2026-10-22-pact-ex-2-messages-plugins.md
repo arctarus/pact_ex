@@ -18,6 +18,11 @@
 
 - Every plan 1 Global Constraint applies, including the test-coverage rule: unit tests for every new function or NIF and its error paths, plus end-to-end tests. Here end-to-end means a real `Message.run` or `SyncMessage.run`, a real gRPC client against the plugin mock server, and assertions on the written pact.
 - Protobuf plugin version `0.8.1`. Install it under `${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-0.8.1` with `scripts/install-protobuf-plugin.sh`.
+- A plugin that is not on disk is installed automatically. pact-plugin-driver does not stop at "not found": it fetches the pact-plugins index from GitHub and installs the plugin if the index lists it. We keep this behaviour and do not add an `installed?` check before loading. Consequences, documented in the README (Task 7):
+  - A test run that needs a missing plugin needs network access.
+  - Offline, the driver falls back to its built-in index, and a missing plugin fails with the driver's own error: `Plugin ... was not found` when a plugin directory exists, `Plugin directory "..." does not exist` when there is none. The second message does not name the plugin, but our error message starts with the plugin name and version (Task 1), so it does either way.
+  - The fetch has no timeout and happens while the driver holds its global plugin lock. On a network that drops packets, loading a plugin can hang. `pactffi_cleanup_plugins` holds `PACT_HANDLES` while it waits for the driver's `PLUGIN_REGISTER` lock, so a hung plugin fetch also blocks any cleanup (explicit or through the reaper) and, through it, every builder NIF in the VM. The single reaper thread also queues later frees behind it.
+  - Every `using_plugin` call also waits 500 ms, so each load costs at least that.
 - Tests that need a plugin are tagged `:plugin`, live in `async: false` modules, and are excluded unless `<plugin dir>/protobuf-0.8.1/pact-plugin.json` exists.
 - Every code path that calls `using_plugin` must call `cleanup_plugins` on the same pact handle, including when the test function raises. Plugins are OS processes and survive otherwise. Rust makes the cleanup exactly-once per pact (`PactResource::cleanup_plugins_once`), so extra calls are harmless. The pact also cleans up when it is garbage collected, but that runs later on a background thread. Explicit cleanup is still required for the plugin process to exit promptly.
 - Every NIF that takes pact_ffi's global `PACT_HANDLES` mutex, and every NIF that blocks or may call a plugin, is `DirtyIo` (the plan 1 rule: every builder NIF is `DirtyIo`, because pact_ffi holds that mutex across plugin round trips). The ones that block or may call a plugin also run inside `on_large_stack`: `using_plugin`, `interaction_contents`, `cleanup_plugins`, `message_reify`, `sync_message_generate_contents`, `pact_handle_write_file`. `new_message_interaction`, `new_sync_message_interaction` and `with_metadata` only take the mutex (through `with_pact` and `with_interaction`): they are `DirtyIo` without `on_large_stack`. The plan 1 mock server queries (`mock_server_matched`, `mock_server_mismatches`) already run on a large stack, so plan 2 does not change them.
@@ -28,7 +33,7 @@
 ## Review Focus
 
 1. **The test function raises during a gRPC or plugin test.** The mock server stops, `cleanup_plugins` runs (once for the pact: a later `MockServer.stop/1` or garbage collection does not clean up again), no pact is written, the exception is re-raised, and no `pact-protobuf-plugin` OS process is left behind. Tested in Task 5.
-2. **The plugin is not installed.** `run/4` returns `{:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}}` with a message that names the plugin, and it does not crash or hang. Tested in Task 2. This test runs without the plugin installed.
+2. **The plugin is not installed.** `run/4` returns `{:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}}` with a message that starts with the plugin name and version, whatever state the plugin directory is in, and it does not crash. It does not promise to return quickly: the driver tries to install a missing plugin from the plugin index first, which needs network access and has no timeout (see Global Constraints). Tested in Tasks 1 and 2. These tests run without the plugin installed.
 3. **gRPC error responses.** `responseMetadata` with `grpc-status: NOT_FOUND` reaches the client as a gRPC error, not as a decoding failure. Tested in Task 5.
 4. **Binary message contents.** A protobuf async message is handed to the test function as raw bytes, decoded from the V4 `{"content": ..., "encoded": "base64"}` envelope, not as a base64 string. Tested in Task 6.
 5. **Message metadata given as matchers.** A metadata value given as a matcher map is JSON-encoded, recorded as a matching rule, and reified to its example value. Tested in Task 3.
@@ -40,7 +45,7 @@
 **Files:**
 - Create: `native/pact_ex_nif/src/messages.rs`, `native/pact_ex_nif/src/plugins.rs`
 - Modify: `native/pact_ex_nif/src/lib.rs`, `native/pact_ex_nif/src/handles.rs`, `lib/pact_ex/native.ex`
-- Test: `test/pact_ex/native/messages_test.exs`, `test/pact_ex/native/scheduler_test.exs` (extend)
+- Test: `test/pact_ex/native/messages_test.exs`, `test/pact_ex/native/plugins_test.exs`, `test/pact_ex/native/scheduler_test.exs` (extend)
 
 **Interfaces:**
 - Consumes (plan 1): `FfiError`, `Outcome`, `clear_error`, `last_error`, `to_cstring`, `on_large_stack`, `PactResource`, `InteractionResource`, `Part`, and the NIFs `new_pact/2`, `with_specification/2`, `given/2`, `with_body/4`, `with_binary_body/4`.
@@ -51,7 +56,7 @@
   - `message_reify(interaction) :: {:ok, String.t()} | {:error, map()}` (DirtyIo)
   - `sync_message_generate_contents(interaction) :: {:ok, String.t()} | {:error, map()}` (DirtyIo)
   - `pact_handle_write_file(pact, dir :: String.t(), overwrite :: boolean()) :: :ok | {:error, map()}` (DirtyIo)
-  - `using_plugin(pact, name :: String.t(), version :: String.t() | nil) :: :ok | {:error, map()}` (DirtyIo). When the plugins of this pact were already cleaned up it returns, without calling pact_ffi, `{:error, %{function: "pactffi_using_plugin", code: 2, message: "the plugins of this pact were already cleaned up"}}`. The cleanup flag is one-way: a plugin loaded after it would never be cleaned up and would leak its process.
+  - `using_plugin(pact, name :: String.t(), version :: String.t() | nil) :: :ok | {:error, map()}` (DirtyIo). Every error message starts with the plugin name and version, `"<name> <version>: <pact_ffi message>"` (just `"<name>: ..."` when the version is `nil`), for example `"protobuf 0.8.1: Plugin directory ... does not exist"`. The driver's own message does not always name the plugin. When the plugins of this pact were already cleaned up it returns, without calling pact_ffi, `{:error, %{function: "pactffi_using_plugin", code: 2, message: "<name> <version>: the plugins of this pact were already cleaned up"}}`. The cleanup flag is one-way: a plugin loaded after it would never be cleaned up and would leak its process.
   - `interaction_contents(interaction, part :: :request | :response, content_type :: String.t(), contents_json :: String.t()) :: :ok | {:error, map()}` (DirtyIo)
   - `cleanup_plugins(pact) :: boolean()` (DirtyIo, inside `on_large_stack`: the plugin driver may `block_on` and kill a plugin process). It calls `PactResource::cleanup_plugins_once`, so it is safe to call more than once. It returns `true` when this call did the cleanup and `false` when an earlier call (or garbage collection) already had.
 
@@ -103,6 +108,38 @@ defmodule PactEx.Native.MessagesTest do
     written = dir |> Path.join("native-msg-consumer-native-msg-provider.json") |> File.read!() |> JSON.decode!()
     assert [%{"type" => "Asynchronous/Messages"}] = written["interactions"]
   end
+end
+```
+
+The plugin tests are in their own module, because they change `PACT_PLUGIN_DIR`, which is global:
+
+```elixir
+# test/pact_ex/native/plugins_test.exs
+defmodule PactEx.Native.PluginsTest do
+  # async: false. ExUnit runs the async modules first and the others after them,
+  # so no other test sees the changed environment.
+  use ExUnit.Case, async: false
+  alias PactEx.Native
+
+  setup do
+    previous = System.get_env("PACT_PLUGIN_DIR")
+
+    # A directory that does not exist: the driver then fails with
+    # `Plugin directory "..." does not exist`, which does not name the plugin.
+    # The test passes on any machine, whatever is in ~/.pact/plugins.
+    missing = Path.join(System.tmp_dir!(), "pact_ex_no_plugins_#{System.unique_integer([:positive])}")
+    System.put_env("PACT_PLUGIN_DIR", missing)
+
+    on_exit(fn ->
+      if previous, do: System.put_env("PACT_PLUGIN_DIR", previous), else: System.delete_env("PACT_PLUGIN_DIR")
+    end)
+  end
+
+  defp v4_pact do
+    pact = Native.new_pact("native-plugin-consumer", "native-plugin-provider")
+    :ok = Native.with_specification(pact, :v4)
+    pact
+  end
 
   test "loading a plugin that is not installed returns code 2 with a message" do
     pact = v4_pact()
@@ -153,8 +190,8 @@ Also add a test to `test/pact_ex/native/scheduler_test.exs`, next to the existin
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/scheduler_test.exs`
-Expected: FAIL with `PactEx.Native.new_message_interaction/2 is undefined or private`.
+Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/plugins_test.exs test/pact_ex/native/scheduler_test.exs`
+Expected: FAIL with `PactEx.Native.new_message_interaction/2 is undefined or private` (and `PactEx.Native.using_plugin/3 is undefined or private` in the plugin tests).
 
 - [ ] **Step 3: Implement `messages.rs`**
 
@@ -169,13 +206,14 @@ Expected: FAIL with `PactEx.Native.new_message_interaction/2 is undefined or pri
 
 - `using_plugin` calls `pactffi_using_plugin` with a null pointer when `version` is `nil`. A non-zero code `c` maps to `last_error("pactffi_using_plugin", c)`.
 - `interaction_contents` calls `pactffi_interaction_contents`. A non-zero code `c` maps to `last_error("pactffi_interaction_contents", c)`.
+- `using_plugin` builds its error message as `"<name> <version>: <message>"`, where `<message>` is the one `last_error` read (or the cleanup message below), so every failure names the plugin.
 - `using_plugin` first checks the cleanup flag of the `PactResource` (add a `plugins_cleaned/0` reader next to `cleanup_plugins_once`). If cleanup already ran, it returns the error from Interfaces. A pact is not used from two processes at once, so the check does not need to be atomic with the load. The reader goes in `handles.rs`. In the same file, remove the `#[allow(dead_code)]` on `cleanup_plugins_once` and the comment above it that says nothing calls it until plan 2: the NIF calls it now.
 - `cleanup_plugins` calls `PactResource::cleanup_plugins_once` and returns its boolean. The exactly-once guard and its Rust tests exist since plan 1.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/scheduler_test.exs`
-Expected: PASS (5 + 2 tests). The last two messages tests run without any plugin installed.
+Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/plugins_test.exs test/pact_ex/native/scheduler_test.exs`
+Expected: PASS (3 + 2 + 2 tests). The plugin tests run without any plugin installed. The first one still reaches for the plugin index (see the auto-install constraint).
 
 - [ ] **Step 6: Commit**
 
@@ -251,8 +289,10 @@ defmodule PactEx.PluginTest do
     pact = PactEx.new("c", "p") |> PactEx.using_plugin("pact-ex-no-such-plugin", "9.9.9")
     i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200)
 
-    assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}} =
+    assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2, message: message}} =
              Consumer.start_mock_server(pact, [i])
+
+    assert message =~ "pact-ex-no-such-plugin"
   end
 
   test "plugin contents next to a different explicit content type are rejected before any native call" do
@@ -830,8 +870,14 @@ exit 1
 Add these sections:
 - Async messages, with the weather example.
 - Sync messages.
-- Plugins: installing them (the script, `PACT_PLUGIN_DIR`), using them (`PactEx.using_plugin/3`, `PactEx.Plugin.contents/2`), and the gRPC example from Task 5.
+- Plugins: installing them (the script, `PACT_PLUGIN_DIR`), auto-install (below), using them (`PactEx.using_plugin/3`, `PactEx.Plugin.contents/2`), and the gRPC example from Task 5.
 - The cleanup guarantee.
+
+The Plugins section also says this about auto-install, in plain words:
+- A plugin that is not installed is downloaded from the pact-plugins index on GitHub when the test runs, so that run needs network access.
+- Offline, a missing plugin fails with an error that starts with the plugin name and version. The rest is the driver's message: `was not found`, or `Plugin directory "..." does not exist` when there is no plugin directory at all.
+- The download has no timeout. On a network that drops packets, a test that loads a plugin can hang, and the driver holds its plugin lock meanwhile.
+- Each plugin load takes at least 500 ms.
 
 Update the parity table rows for plan 2.
 
