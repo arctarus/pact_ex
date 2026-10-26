@@ -553,4 +553,33 @@ defmodule PactEx.Consumer.ApplyTest do
       assert message =~ ~s(unsupported contents of message "m": 123)
     end
   end
+
+  describe "plan_json/3" do
+    @message_entry "PactEx.Message.run/4"
+    @label ~s(metadata "k" of message "m")
+
+    defp plan_json(term), do: Apply.plan_json(term, @label, @message_entry)
+
+    test "a map is encoded" do
+      assert {:ok, ~s({"a":1})} = plan_json(%{"a" => 1})
+    end
+
+    test "a string is encoded as a JSON string" do
+      assert {:ok, ~s("5")} = plan_json("5")
+    end
+
+    test "a repeated key is rejected with the entry point and the label" do
+      assert {:error, %PactEx.Error{code: -101, function: @message_entry, message: message}} =
+               plan_json(%{"a" => %{:b => 1, "b" => 2}})
+
+      assert message =~ ~s(cannot encode metadata "k" of message "m" as JSON)
+    end
+
+    test "a value JSON cannot encode is rejected with the entry point and the label" do
+      assert {:error, %PactEx.Error{code: -101, function: @message_entry, message: message}} =
+               plan_json({1, 2})
+
+      assert message =~ ~s(cannot encode metadata "k" of message "m" as JSON)
+    end
+  end
 end
