@@ -9,16 +9,10 @@ use pact_ffi::mock_server::{
 };
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
 
+use crate::args::port_arg;
 use crate::error::{clear_error, failure_with, to_cstring, FfiError, Outcome};
 use crate::handles::PactResource;
 use crate::stack::on_large_stack;
-
-/// Rustler decodes `u16` with a truncating cast, so a port above 65535 would
-/// silently wrap. Decode as `i64` and range-check instead; a port outside
-/// `0..=65535` is a caller bug and raises `ArgumentError`.
-fn port_arg(port: i64) -> NifResult<u16> {
-    u16::try_from(port).map_err(|_| rustler::Error::BadArg)
-}
 
 /// Serialises reading a mock server's mismatches and cleaning it up.
 ///
@@ -144,15 +138,20 @@ fn create_mock_server(
 
 // DirtyIo: pact_ffi takes the global mock server manager mutex here, and holds
 // it across file I/O (`write_pact_file`) and server shutdown (`cleanup`).
+// Large stack: for a mock server provided by a plugin, pact_mock_server asks the
+// plugin over gRPC with `block_on` while holding that mutex, and `block_on` runs
+// the outer frames of the future on the calling thread.
 #[rustler::nif(schedule = "DirtyIo")]
 fn mock_server_matched(port: i64) -> NifResult<bool> {
-    Ok(pactffi_mock_server_matched(port_arg(port)?.into()))
+    let port = i32::from(port_arg(port)?);
+    Ok(on_large_stack(move || pactffi_mock_server_matched(port)))
 }
 
-// DirtyIo for the same reason as `mock_server_matched`.
+// DirtyIo and large stack for the same reasons as `mock_server_matched`.
 #[rustler::nif(schedule = "DirtyIo")]
 fn mock_server_mismatches(port: i64) -> NifResult<Option<String>> {
-    Ok(read_mismatches(port_arg(port)?.into()))
+    let port = i32::from(port_arg(port)?);
+    Ok(on_large_stack(move || read_mismatches(port)))
 }
 
 #[rustler::nif(schedule = "DirtyIo")]

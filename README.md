@@ -65,6 +65,9 @@ function with the `PactEx.MockServer` (use `mock.url`), and then:
   is written, and the exception propagates.
 - **The server could not start or the pact could not be written.** It returns
   `{:error, %PactEx.Error{}}`.
+- **The server reported a failed match without mismatch details.** For example
+  a plugin mock server that failed to answer, or a server your function already
+  stopped. It returns `{:error, %PactEx.Error{code: -102}}` and writes nothing.
 
 The mock server is stopped when your function returns, raises, throws or exits.
 A brutal kill of the calling process (an ExUnit timeout or a linked crash)

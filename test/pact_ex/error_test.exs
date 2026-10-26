@@ -124,6 +124,52 @@ defmodule PactEx.ErrorTest do
       assert message =~ "name was different"
     end
 
+    test "message/1 shows the error and the details of a plugin mismatch" do
+      error = %MismatchError{
+        mismatches: [
+          %{
+            "path" => "/plugin/path",
+            "error" => "Did not receive any requests for path /plugin/path",
+            "mismatches" => [
+              %{
+                "expected" => "a",
+                "actual" => "b",
+                "mismatch" => "expected a but got b",
+                "path" => "$.field",
+                "diff" => ""
+              }
+            ]
+          }
+        ]
+      }
+
+      assert Exception.message(error) =~
+               "  - /plugin/path: Did not receive any requests for path /plugin/path"
+
+      assert Exception.message(error) =~ "expected a but got b"
+    end
+
+    test "message/1 skips an empty error on a plugin mismatch" do
+      error = %MismatchError{
+        mismatches: [
+          %{
+            "path" => "/pkg.Service/Method",
+            "error" => "",
+            "mismatches" => [%{"mismatch" => "expected a but got b"}]
+          }
+        ]
+      }
+
+      assert Exception.message(error) ==
+               "Pact mock server reported 1 mismatch(es):\n" <>
+                 "  - /pkg.Service/Method\n      expected a but got b"
+    end
+
+    test "message/1 shows the error of a mismatch without a path" do
+      message = Exception.message(%MismatchError{mismatches: [%{"error" => "plugin failed"}]})
+      assert message =~ "  - plugin failed"
+    end
+
     test "message/1 tolerates mismatches without method or path" do
       message = Exception.message(%MismatchError{mismatches: [%{"type" => "mystery"}]})
       assert message =~ "mystery"

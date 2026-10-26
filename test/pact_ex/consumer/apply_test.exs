@@ -494,4 +494,63 @@ defmodule PactEx.Consumer.ApplyTest do
                Apply.interaction(pact_ref(), i)
     end
   end
+
+  describe "plan_body/4" do
+    @message_entry "PactEx.Message.run/4"
+    @label ~s(contents of message "m")
+
+    defp plan_body(body, content_type \\ nil),
+      do: Apply.plan_body(body, content_type, @label, @message_entry)
+
+    test "a map is JSON text" do
+      assert {:ok, {:text, "application/json", ~s({"a":1})}} = plan_body(%{"a" => 1})
+    end
+
+    test "a list is JSON text" do
+      assert {:ok, {:text, "application/json", ~s([1,"a"])}} = plan_body([1, "a"])
+    end
+
+    test "a UTF-8 string without NUL is text" do
+      assert {:ok, {:text, "text/plain", "hello"}} = plan_body("hello")
+    end
+
+    test "any other binary is binary" do
+      assert {:ok, {:binary, "application/octet-stream", <<0xFF, 0x00>>}} =
+               plan_body(<<0xFF, 0x00>>)
+    end
+
+    test "the explicit content type is trimmed and used" do
+      assert {:ok, {:text, "text/csv", "hello"}} = plan_body("hello", " text/csv ")
+    end
+
+    test "an explicit content type that pact_models cannot parse falls back to the default" do
+      assert {:ok, {:text, "text/plain", "hello"}} = plan_body("hello", "not a type")
+    end
+
+    test "no body is nil" do
+      assert {:ok, nil} = plan_body(nil)
+      assert {:ok, nil} = plan_body(nil, "text/csv")
+    end
+
+    test "an invalid XML description is rejected with the entry point and the label" do
+      assert {:error, %PactEx.Error{code: -101, function: @message_entry, message: message}} =
+               plan_body(%{"root" => 1}, "application/xml")
+
+      assert message =~ ~s(contents of message "m" cannot be sent)
+    end
+
+    test "a repeated key is rejected with the entry point and the label" do
+      assert {:error, %PactEx.Error{code: -101, function: @message_entry, message: message}} =
+               plan_body(%{:a => 1, "a" => 2})
+
+      assert message =~ ~s(cannot encode contents of message "m" as JSON)
+    end
+
+    test "an unsupported body is rejected with the entry point and the label" do
+      assert {:error, %PactEx.Error{code: -101, function: @message_entry, message: message}} =
+               plan_body(123)
+
+      assert message =~ ~s(unsupported contents of message "m": 123)
+    end
+  end
 end

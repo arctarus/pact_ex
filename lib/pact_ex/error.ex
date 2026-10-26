@@ -10,7 +10,9 @@ defmodule PactEx.Error do
     * `:code` - the numeric error code. `-100` means an argument contained a
       NUL byte. `-101` means `PactEx` rejected an interaction before calling
       the native library, for example a missing request or an unsupported
-      value type.
+      value type. `-102` means the mock server reported a failed match but
+      returned no mismatch details, for example a plugin mock server that
+      failed to answer or a server that was already stopped. Nothing is written.
     * `:message` - a description of the failure.
   """
 

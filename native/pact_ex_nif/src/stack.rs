@@ -1,6 +1,6 @@
 //! Runs blocking FFI work on a thread with a large stack.
 
-const LARGE_STACK: usize = 8 * 1024 * 1024;
+pub const LARGE_STACK: usize = 8 * 1024 * 1024;
 
 /// Runs `f` on a fresh thread with an 8 MiB stack and returns its value.
 ///

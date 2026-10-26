@@ -35,7 +35,10 @@ fn check(name: &str, call: impl FnOnce() -> bool) -> Result<(), FfiError> {
     }
 }
 
-#[rustler::nif]
+// DirtyIo: every builder NIF takes pact_ffi's global `PACT_HANDLES` mutex, which
+// pact_ffi holds across plugin round trips that can take seconds. Waiting for
+// it must not stall a normal scheduler.
+#[rustler::nif(schedule = "DirtyIo")]
 fn with_request(
     interaction: ResourceArc<InteractionResource>,
     method: String,
@@ -51,7 +54,7 @@ fn with_request(
     result.into()
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn with_query_parameter(
     interaction: ResourceArc<InteractionResource>,
     name: String,
@@ -73,7 +76,7 @@ fn with_query_parameter(
     result.into()
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn with_header(
     interaction: ResourceArc<InteractionResource>,
     part: Term,
@@ -98,7 +101,7 @@ fn with_header(
     Ok(result.into())
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn with_body(
     interaction: ResourceArc<InteractionResource>,
     part: Term,
@@ -121,7 +124,7 @@ fn with_body(
     Ok(result.into())
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn with_binary_body(
     interaction: ResourceArc<InteractionResource>,
     part: Term,
@@ -144,7 +147,7 @@ fn with_binary_body(
     Ok(result.into())
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn response_status(interaction: ResourceArc<InteractionResource>, status: String) -> Outcome {
     const NAME: &str = "pactffi_response_status_v2";
     let result = to_cstring(NAME, &status).and_then(|status| {

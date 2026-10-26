@@ -38,6 +38,8 @@ defmodule PactEx.Consumer.Apply do
   #
   # `plan/1` does all of this without calling the native library (apart from
   # the pure content type and JSON helpers). `interaction/2` applies the plan.
+  # `plan_body/4` is the entry for contents that have no headers (messages):
+  # the same body rules, with the caller's label and entry point in errors.
 
   alias PactEx.{Error, Native}
   alias PactEx.Consumer.BodyCheck
@@ -84,6 +86,36 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
+  @doc """
+  Plans a body that has no headers, such as the contents of a message.
+
+  Follows the same rules as an HTTP body. `content_type` is the explicit
+  candidate (`nil` or a string). `label` names the body in error messages and
+  `entry_point` is the `function` of the `-101` errors.
+  """
+  @spec plan_body(term(), String.t() | nil, String.t(), String.t()) ::
+          {:ok, nil | {:text, String.t(), String.t()} | {:binary, String.t(), binary()}}
+          | {:error, Error.t()}
+  def plan_body(body, content_type, label, entry_point) do
+    result =
+      if supported_body?(body) do
+        with {:ok, {_source, planned}} <-
+               plan_contents(body, [{:explicit, content_type}], label),
+             do: {:ok, planned}
+      else
+        {:error,
+         invalid("unsupported #{label}: #{inspect(body)}, expected a binary, map or list")}
+      end
+
+    case result do
+      {:error, %Error{code: @invalid_code} = error} ->
+        {:error, %{error | function: entry_point}}
+
+      other ->
+        other
+    end
+  end
+
   # -- Plan: headers and body of each part, decided before any native call ----
 
   defp plan(%Interaction{description: description} = interaction) do
@@ -101,28 +133,53 @@ defmodule PactEx.Consumer.Apply do
     with {:ok, headers} <- canonical_headers(struct.headers, "#{part} header"),
          :ok <- check_params(headers, "#{part} header", description),
          :ok <- check_content_type_header(headers, part, description) do
-      case body do
-        nil ->
-          {:ok, %{headers: headers, body: nil}}
+      if supported_body?(body) do
+        label = "#{part} body of interaction #{inspect(description)}"
+        candidates = [{:explicit, struct.content_type}, {:header, header_candidate(headers)}]
 
-        body when is_map(body) or is_list(body) ->
-          label = "#{part} body of interaction #{inspect(description)}"
-
-          with {:ok, json, _decoded} <- encode_decoded(body, label),
-               {:ok, {source, type, kind}} <- choose_type(struct, headers, "application/json"),
-               :ok <- check_body(kind, json, :encoded, part, description) do
-            {:ok, %{headers: with_type(headers, source, type), body: {:text, type, json}}}
-          end
-
-        body when is_binary(body) ->
-          plan_binary(part, description, struct, headers, body)
-
-        other ->
-          {:error,
-           invalid("unsupported #{part} body: #{inspect(other)}, expected a binary, map or list")}
+        with {:ok, {source, planned}} <- plan_contents(body, candidates, label) do
+          {:ok, %{headers: typed_headers(headers, source, planned), body: planned}}
+        end
+      else
+        {:error,
+         invalid("unsupported #{part} body: #{inspect(body)}, expected a binary, map or list")}
       end
     end
   end
+
+  # The body rules, shared by HTTP parts and `plan_body/4`. `candidates` are the
+  # `{source, string}` content types to try before the default of the body
+  # type. Returns the source of the chosen type and the planned body (`nil`,
+  # `{:text, type, text}` or `{:binary, type, binary}`). `label` names the
+  # body in error messages.
+  defp plan_contents(nil, _candidates, _label), do: {:ok, {:default, nil}}
+
+  defp plan_contents(body, candidates, label) when is_map(body) or is_list(body) do
+    with {:ok, json, _decoded} <- encode_decoded(body, label),
+         {:ok, {source, type, kind}} <- choose_type(candidates, "application/json"),
+         :ok <- check_body(kind, json, :encoded, label) do
+      {:ok, {source, {:text, type, json}}}
+    end
+  end
+
+  defp plan_contents(body, candidates, label) when is_binary(body) do
+    if String.valid?(body) and not String.contains?(body, <<0>>) do
+      with {:ok, {source, type, kind}} <- choose_type(candidates, "text/plain"),
+           :ok <- check_body(kind, body, :text, label) do
+        {:ok, {source, {:text, type, body}}}
+      end
+    else
+      with {:ok, {source, type, _kind}} <- choose_type(candidates, "application/octet-stream") do
+        {:ok, {source, {:binary, type, body}}}
+      end
+    end
+  end
+
+  defp supported_body?(body), do: is_nil(body) or is_map(body) or is_list(body) or is_binary(body)
+
+  # The header is written back only when a body chose a type.
+  defp typed_headers(headers, _source, nil), do: headers
+  defp typed_headers(headers, source, {_kind, type, _body}), do: with_type(headers, source, type)
 
   # A Content-Type header that pact_ffi cannot use, for two reasons.
   #
@@ -275,21 +332,7 @@ defmodule PactEx.Consumer.Apply do
 
   defp display_name(name), do: name
 
-  defp plan_binary(part, description, struct, headers, body) do
-    if String.valid?(body) and not String.contains?(body, <<0>>) do
-      with {:ok, {source, type, kind}} <- choose_type(struct, headers, "text/plain"),
-           :ok <- check_body(kind, body, :text, part, description) do
-        {:ok, %{headers: with_type(headers, source, type), body: {:text, type, body}}}
-      end
-    else
-      with {:ok, {source, type, _kind}} <-
-             choose_type(struct, headers, "application/octet-stream") do
-        {:ok, %{headers: with_type(headers, source, type), body: {:binary, type, body}}}
-      end
-    end
-  end
-
-  defp check_body(kind, text, origin, part, description) when kind in [:xml, :form] do
+  defp check_body(kind, text, origin, label) when kind in [:xml, :form] do
     case BodyCheck.check(kind, text, origin) do
       :ok ->
         :ok
@@ -297,7 +340,7 @@ defmodule PactEx.Consumer.Apply do
       {:error, reason} ->
         {:error,
          invalid(
-           "#{part} body of interaction #{inspect(description)} cannot be sent: #{reason}. " <>
+           "#{label} cannot be sent: #{reason}. " <>
              "With an XML or form-urlencoded content type pact_ffi reads a JSON body as " <>
              "a description of the body in its own format, not as JSON, and it can " <>
              "panic on a description of the wrong shape. Pass a string for a raw body."
@@ -305,20 +348,14 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
-  defp check_body(_kind, _text, _origin, _part, _description), do: :ok
+  defp check_body(_kind, _text, _origin, _label), do: :ok
 
-  # The canonical content type of a part: the first candidate, trimmed, that
+  # The canonical content type of a body: the first candidate, trimmed, that
   # pact_models can parse. A candidate with a NUL byte is taken as it is, so
   # that the native call rejects it with its usual error. The default always
   # parses.
-  defp choose_type(%{content_type: explicit}, headers, default) do
-    candidates = [
-      {:explicit, explicit},
-      {:header, header_candidate(headers)},
-      {:default, default}
-    ]
-
-    Enum.find_value(candidates, fn
+  defp choose_type(candidates, default) do
+    Enum.find_value(candidates ++ [{:default, default}], fn
       {source, candidate} when is_binary(candidate) ->
         type = String.trim(candidate)
 
