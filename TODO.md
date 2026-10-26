@@ -46,6 +46,26 @@ Found when plan 2 (`docs/superpowers/plans/2026-10-22-pact-ex-2-messages-plugins
 - [x] **plan** Task 7: bump the version, then build the precompiled NIFs and their checksums for the new release.
 - [ ] Re-review plan 3 against the plan 1 code.
 
+### Second review
+
+Found when plan 2 was reviewed again against `main` after the fixes above (merge commit a7b24b3).
+
+Important:
+
+- [ ] **plan** Reject `%PluginContents{}` in a pact without plugins. `find_content_matcher` looks in the driver's global catalogue (`catalogue_manager.rs:379`), so `interaction_contents` works when another pact in the VM loaded the plugin. It then records the plugin in this pact (`add_plugin`), and cleaning up this pact calls `drop_plugin_access` for an access it never added. That shuts down the plugin under the other pact. Return `-101` before any native call when a pact has plugin contents and `pact.plugins == []`.
+- [ ] **plan** Validate every sync message response (Task 4). `will_respond_with(nil)` plans to `nil`, so no `with_body` call is made and the response is silently dropped (each `with_body` on `:response` appends one, `handles.rs:1952`). `will_respond_with("")` becomes `OptionalBody::Empty`, whose envelope is `{"content": ""}` without `contentType` or `encoded` (`bodies.rs:176`), and the envelope decoding does not handle it. Reject `nil` and `""` responses, and decode `{"content": ""}` to `""`.
+- [ ] **code + plan** Encode provider state params, metadata values and plugin contents before any native call, with the runner's entry point. `Apply.provider_states/2` is private and its errors name `PactEx.Consumer.start_mock_server/3`. `JSON.encode!/1` on metadata and plugin contents raises on a tuple instead of returning `-101`, does not reject a repeated key, and runs after the native calls start. Add a public `Apply.plan_json/3` (same rules as `encode_decoded`, caller's label and entry point) and use it in step 0 of the message runners.
+- [ ] **plan** `start_mock_server/3` must clean up plugins on every failure after `new_pact`: a `load_all` that fails after loading an earlier plugin, and an exception such as the `ArgumentError` from a NUL byte in an interaction description.
+
+Minor:
+
+- [ ] **plan** The `using_plugin` error message is `"<name> <version>: Could not load plugin - <driver message>"` (`plugins/mod.rs:101`). Fix the example in Task 1 and the README text in Task 7.
+- [ ] **plan** pact_models never writes `"encoded": "json"`, only `false` or `"base64"` (`bodies.rs:145-160`). A text body with a JSON content type that is not valid JSON is written as base64, so `Reified.contents` is raw bytes there. Document it and test it.
+- [ ] **plan** The Task 1 test "reifies with generators applied" has no generator. Rename it.
+- [ ] **plan** `Message.run/4` takes `opts` but defines none. Say that it takes none yet and raises on any.
+- [ ] **plan** `Generated.transport.url` is `"host:port"`, without a scheme, and wrong for an IPv6 host. Call it `address` and bracket an IPv6 host.
+- [ ] **plan** Task 7: run `cargo test -- --ignored` in CI after the plugin is installed, so the Rust exactly-once test runs against the real plugin.
+
 ## Minor: code
 
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
