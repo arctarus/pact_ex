@@ -6,7 +6,7 @@
 
 **Architecture:** A Rustler crate (`native/pact_ex_nif`) depends on the `pact_ffi` crate and exposes thin NIFs over its handles. `PactHandle` and `InteractionHandle` are wrapped in Rustler resources. The Elixir side is pure data until `PactEx.Consumer.start_mock_server/3`, which creates a fresh FFI pact, applies the interactions and starts the mock server. There is no GenServer and no shared mutable state between tests.
 
-**Tech Stack:** Elixir ~> 1.18 (built-in `JSON`), OTP 26+, Rust 1.88+, `rustler` 0.38 (crate and Hex), `rustler_precompiled` ~> 0.10, `pact_ffi` =0.5.12, `req` (test only).
+**Tech Stack:** Elixir ~> 1.18 (built-in `JSON`), OTP 26+, Rust 1.91+ (rustler 0.38 `rust-version`), `rustler` 0.38 (crate and Hex), `rustler_precompiled` ~> 0.10, `pact_ffi` =0.5.12, `req` (test only).
 
 **Spec:** `docs/superpowers/specs/2026-10-22-pact-ex-design.md`
 
@@ -24,6 +24,10 @@
 - Error map shape returned by NIFs: `%{function: String.t(), code: integer(), message: String.t()}`.
 - No FFI log callbacks or plugin log callbacks.
 - Code, docs and commit messages are in English. `mix format` and `cargo fmt` are clean before every commit.
+- **Test coverage (user requirement, 2026-10-22):**
+  - Every function or NIF that a task adds has tests in that same task. Each one needs a test for its success path, and one for each error path it documents or returns: error tuples, ArgumentError on bad input, and invalid handle or port.
+  - Every user-facing feature has an end-to-end test that drives a real mock server with a real HTTP client and checks the pact file it writes.
+  - A brief's test list is the minimum, not the ceiling. If a task adds code that its listed tests don't exercise, the implementer adds tests for it.
 
 ## Review Focus
 
@@ -298,8 +302,60 @@ defmodule PactEx.Native.MockServerTest do
     assert %{body: <<0, 255, 1>>} = Req.get!("http://127.0.0.1:#{port}/bin", decode_body: false)
     assert Native.cleanup_mock_server(port)
   end
+
+  test "query parameters and request/response headers are served and matched" do
+    pact = Native.new_pact("native-consumer", "native-provider")
+    i = Native.new_interaction(pact, "search")
+    :ok = Native.with_request(i, "GET", "/search")
+    :ok = Native.with_query_parameter(i, "tag", 0, "a")
+    :ok = Native.with_query_parameter(i, "tag", 1, "b")
+    :ok = Native.with_header(i, :request, "x-id", 0, "1")
+    :ok = Native.response_status(i, "204")
+    :ok = Native.with_header(i, :response, "x-reply", 0, "yes")
+    {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
+    resp = Req.get!("http://127.0.0.1:#{port}/search?tag=a&tag=b", headers: [{"x-id", "1"}], retry: false)
+    assert resp.status == 204
+    assert Req.Response.get_header(resp, "x-reply") == ["yes"]
+    assert Native.mock_server_matched(port)
+    assert Native.cleanup_mock_server(port)
+  end
+
+  test "interaction builders return an error once the mock server has started" do
+    pact = Native.new_pact("native-consumer", "native-provider")
+    i = Native.new_interaction(pact, "late")
+    :ok = Native.with_request(i, "GET", "/late")
+    {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
+    assert {:error, %{function: "pactffi_with_request"}} = Native.with_request(i, "GET", "/other")
+    assert {:error, %{function: "pactffi_with_header_v2"}} = Native.with_header(i, :request, "x", 0, "y")
+    assert {:error, %{function: "pactffi_with_query_parameter_v2"}} = Native.with_query_parameter(i, "q", 0, "v")
+    assert {:error, %{function: "pactffi_with_body"}} = Native.with_body(i, :response, "text/plain", "x")
+    assert {:error, %{function: "pactffi_with_binary_body"}} = Native.with_binary_body(i, :response, "application/octet-stream", <<1>>)
+    assert {:error, %{function: "pactffi_response_status_v2"}} = Native.response_status(i, "500")
+    assert Native.cleanup_mock_server(port)
+  end
+
+  test "string arguments with NUL bytes are rejected without calling the FFI" do
+    i = Native.new_interaction(Native.new_pact("native-consumer", "native-provider"), "nul")
+    assert {:error, %{code: -100}} = Native.with_request(i, "GET", "/a\0b")
+    assert {:error, %{code: -100}} = Native.with_body(i, :response, "text/plain", "a\0b")
+  end
+
+  test "an unknown part atom raises ArgumentError" do
+    i = Native.new_interaction(Native.new_pact("native-consumer", "native-provider"), "part")
+    assert_raise ArgumentError, fn -> Native.with_header(i, :both, "x", 0, "y") end
+  end
+
+  @tag :tmp_dir
+  test "unknown ports: matched false, mismatches nil, write code 3, cleanup false", %{tmp_dir: dir} do
+    refute Native.mock_server_matched(1)
+    assert Native.mock_server_mismatches(1) == nil
+    assert {:error, %{function: "pactffi_write_pact_file", code: 3}} = Native.write_pact_file(1, dir, false)
+    refute Native.cleanup_mock_server(1)
+  end
 end
 ```
+
+If the FFI turns out not to reject a builder call after the mock server has started (the "interaction builders return an error" test), report it as DONE_WITH_CONCERNS with the observed return value. Don't weaken the test silently.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -322,7 +378,7 @@ Expected: FAIL with `PactEx.Native.with_request/3 is undefined or private`.
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `mix test test/pact_ex/native/mock_server_test.exs`
-Expected: PASS (4 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 6: Commit**
 
@@ -615,6 +671,63 @@ defmodule PactEx.ConsumerTest do
     i = HTTP.interaction("never") |> HTTP.with_request(:get, "/never") |> HTTP.will_respond_with(200)
     assert_raise PactEx.MismatchError, fn -> Consumer.run!(pact, [i], fn _ -> :ok end) end
   end
+
+  test "run!/4 returns :ok when everything matched", %{pact: pact} do
+    i = HTTP.interaction("ok") |> HTTP.with_request(:get, "/ok") |> HTTP.will_respond_with(200)
+    assert :ok = Consumer.run!(pact, [i], fn m -> Req.get!(m.url <> "/ok") end)
+  end
+
+  test "a request with the wrong body returns a MismatchError naming the body mismatch", %{pact: pact, tmp_dir: dir} do
+    i =
+      HTTP.interaction("create")
+      |> HTTP.with_request(:post, "/things", body: %{"name" => "exact"})
+      |> HTTP.will_respond_with(201)
+
+    assert {:error, %PactEx.MismatchError{mismatches: mismatches} = e} =
+             Consumer.run(pact, [i], fn m -> Req.post!(m.url <> "/things", json: %{name: "other"}, retry: false) end)
+
+    assert Enum.any?(mismatches, &(&1["type"] in ["request-mismatch", "missing-request"]))
+    assert Exception.message(e) =~ "/things"
+    refute File.exists?(Path.join(dir, "consumer-test-provider-test.json"))
+  end
+
+  test "an unexpected request returns a MismatchError", %{pact: pact} do
+    i = HTTP.interaction("expected") |> HTTP.with_request(:get, "/expected") |> HTTP.will_respond_with(200)
+
+    assert {:error, %PactEx.MismatchError{mismatches: mismatches}} =
+             Consumer.run(pact, [i], fn m ->
+               Req.get!(m.url <> "/expected")
+               Req.get!(m.url <> "/surprise", retry: false)
+             end)
+
+    assert Enum.any?(mismatches, &(&1["type"] == "request-not-found"))
+  end
+
+  test "low-level API: start, matched?, mismatches, write_pact, stop", %{pact: pact, tmp_dir: dir} do
+    i = HTTP.interaction("low") |> HTTP.with_request(:get, "/low") |> HTTP.will_respond_with(200)
+    assert {:ok, %PactEx.MockServer{port: port, url: url} = mock} = Consumer.start_mock_server(pact, [i])
+    assert url == "http://127.0.0.1:#{port}"
+    refute PactEx.MockServer.matched?(mock)
+    assert [%{"type" => "missing-request"}] = PactEx.MockServer.mismatches(mock)
+    Req.get!(url <> "/low")
+    assert PactEx.MockServer.matched?(mock)
+    assert PactEx.MockServer.mismatches(mock) == []
+    assert :ok = PactEx.MockServer.write_pact(mock)
+    assert File.exists?(Path.join(dir, "consumer-test-provider-test.json"))
+    assert :ok = PactEx.MockServer.stop(mock)
+    refute PactEx.Native.cleanup_mock_server(port)
+  end
+
+  test "invalid input surfaces as PactEx.Error from start_mock_server", %{pact: pact} do
+    i = HTTP.interaction("bad") |> HTTP.with_request(:get, "/bad\0path") |> HTTP.will_respond_with(200)
+    assert {:error, %PactEx.Error{code: -100}} = Consumer.start_mock_server(pact, [i])
+  end
+
+  test "PactEx.Error.from_native/1 builds the exception", _ do
+    e = PactEx.Error.from_native(%{function: "pactffi_x", code: 2, message: "boom"})
+    assert %PactEx.Error{function: "pactffi_x", code: 2, message: "boom"} = e
+    assert Exception.message(e) =~ "boom"
+  end
 end
 ```
 
@@ -650,7 +763,7 @@ Encoding rules (the spec pins these; the tests above exercise them):
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `mix test test/pact_ex/consumer_test.exs`
-Expected: PASS (8 tests).
+Expected: PASS (14 tests).
 
 - [ ] **Step 7: Commit**
 
@@ -684,8 +797,19 @@ defmodule PactEx.LogTest do
   use ExUnit.Case, async: false
   alias PactEx.HTTP
 
+  test "invalid options raise ArgumentError" do
+    assert_raise ArgumentError, fn -> PactEx.Log.init(level: :loud) end
+    assert_raise ArgumentError, fn -> PactEx.Log.init(sink: :syslog) end
+  end
+
   @tag :tmp_dir
   test "file sink receives FFI logs and a second init is rejected", %{tmp_dir: dir} do
+    # An unopenable file fails at attach time (-6), before a logger is applied,
+    # so a later valid init must still succeed. If pact_ffi refuses re-init after
+    # a failed attach, report it instead of dropping this assertion.
+    assert {:error, %PactEx.Error{function: "pactffi_logger_attach_sink", code: -6}} =
+             PactEx.Log.init(sink: {:file, Path.join(dir, "missing/dir/pact.log")})
+
     log = Path.join(dir, "pact.log")
     assert PactEx.Log.init(level: :debug, sink: {:file, log}) == :ok
 
@@ -711,7 +835,7 @@ Map the level atom to pact_ffi's `LevelFilter`. Return `last_error("pactffi_logg
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `mix test test/pact_ex/log_test.exs`
-Expected: PASS.
+Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -725,7 +849,7 @@ git commit -m "feat: add pact_ffi logging configuration"
 ### Task 8: pact_erlang parity acceptance suite and concurrent writes
 
 **Files:**
-- Create: `test/support/animal_client.ex`, `test/acceptance/http_end_to_end_test.exs`, `test/acceptance/concurrent_write_test.exs`
+- Create: `test/support/animal_client.ex`, `test/acceptance/http_end_to_end_test.exs`, `test/acceptance/concurrent_write_test.exs`, `test/acceptance/matchers_end_to_end_test.exs`
 
 **Interfaces:**
 - Consumes: the whole public API (Tasks 4–6).
@@ -761,6 +885,30 @@ test "parallel runs merge into one pact file", %{tmp_dir: dir} do
 end
 ```
 
+`matchers_end_to_end_test.exs` checks every matcher in `PactEx.Matchers` end to end. Each test is one `@tag :tmp_dir` case that:
+1. Defines a response or request using the matcher.
+2. Drives the mock server with a real Req call. In the request-side tests, the client sends a value that differs from the example but satisfies the rule.
+3. Asserts `run/3` returns `:ok`.
+4. Asserts the written pact records the expected `matchingRules` entry (`"match"` value in parentheses below).
+
+The matcher cases:
+- `like/1` (`"type"`): the client sends `"Bob"` for example `"Ann"`.
+- `each_like/2` with `min: 2` (`"type"` with `"min" => 2`): the client sends a 3-element list.
+- `regex/2` (`"regex"`): the client sends `"abc-999"` for `^abc-\d+$`.
+- `each_key/2` (`"eachKey"`): the client sends a map with a different key matching the pattern.
+- `integer/1` (`"integer"`): the client sends `42`.
+- `decimal/1` (`"decimal"`): the client sends `9.75`.
+- `boolean/1` (`"boolean"`): the client sends `false`.
+- `datetime/2` (`"datetime"` with `"format"`): the client sends another timestamp in the same format.
+- `include/1` (`"include"`): the client sends a longer string containing the substring.
+
+Plus one negative case per rule family. In each, the client sends a value that breaks the rule, and `run/3` returns `{:error, %PactEx.MismatchError{}}`:
+- `regex/2` with a non-matching string
+- `integer/1` with a string
+- `each_like/2` with fewer elements than `min`
+
+Put matchers in request bodies, where the client controls the value, so the mock server enforces them. For each response-side matcher, add one case where the client just decodes the example.
+
 - [ ] **Step 2: Implement `test/support/animal_client.ex`**
 
 Use `Req` with `retry: false`. A 404 response maps to `{:error, :not_found}`.
@@ -768,7 +916,7 @@ Use `Req` with `retry: false`. A 404 response maps to `{:error, :not_found}`.
 - [ ] **Step 3: Run the acceptance tests**
 
 Run: `mix test test/acceptance`
-Expected: PASS (5 tests). `pact_models` 1.3.17 `write_pact` takes an in-process `WRITE_LOCK` mutex plus a blocking exclusive file lock (verified 2026-10-22), so merging should be safe. If the concurrency test fails, either with fewer than 8 interactions or with `{:error, %PactEx.Error{}}`, stop and report it. Don't patch around it: the spec's assumption is wrong and the spec needs to change.
+Expected: PASS (5 parity/concurrency tests plus every matchers case). `pact_models` 1.3.17 `write_pact` takes an in-process `WRITE_LOCK` mutex plus a blocking exclusive file lock (verified 2026-10-22), so merging should be safe. If the concurrency test fails, either with fewer than 8 interactions or with `{:error, %PactEx.Error{}}`, stop and report it. Don't patch around it: the spec's assumption is wrong and the spec needs to change.
 
 - [ ] **Step 4: Run the full suite**
 
@@ -818,7 +966,7 @@ git commit -m "test: port pact_erlang HTTP acceptance suite and add concurrent w
 
 - [ ] **Step 5: Write `README.md`**
 
-Sections: install, quick start (the spec's API sketch), matchers table, logging, building from source (`PACT_EX_BUILD=1`, Rust 1.88+), supported platforms, and the pact_erlang parity table from the spec. List messages, plugins and the verifier as "coming in plans 2–3".
+Sections: install, quick start (the spec's API sketch), matchers table, logging, building from source (`PACT_EX_BUILD=1`, Rust 1.91+ (rustler 0.38 `rust-version`)), supported platforms, and the pact_erlang parity table from the spec. List messages, plugins and the verifier as "coming in plans 2–3".
 
 - [ ] **Step 6: Verify packaging**
 

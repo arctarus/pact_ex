@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, OTP ${{ matrix.beam.otp }}, Elixir ${{ matrix.beam.elixir }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        beam:
+          # The oldest supported pair.
+          - { otp: "26", elixir: "1.18" }
+          - { otp: "27", elixir: "1.18" }
+          - { otp: "28", elixir: "1.19" }
+    env:
+      PACT_EX_BUILD: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: ${{ matrix.beam.otp }}
+          elixir-version: ${{ matrix.beam.elixir }}
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+
+      # Rustler builds the NIF with cargo's default target directory,
+      # native/pact_ex_nif/target. It is not under _build.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: native/pact_ex_nif
+
+      - run: mix deps.get
+
+      - run: mix format --check-formatted
+
+      - run: cargo fmt --check
+        working-directory: native/pact_ex_nif
+
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: native/pact_ex_nif
+
+      - run: cargo test
+        working-directory: native/pact_ex_nif
+
+      # The test environment is the one `mix test` uses next, so the NIF is
+      # not built twice.
+      - run: mix compile --warnings-as-errors
+        env:
+          MIX_ENV: test
+
+      # Includes the abort matrix (test/abort_matrix_test.exs, tag
+      # :abort_matrix), which runs each risky input in its own OS process.
+      - run: mix test
