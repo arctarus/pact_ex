@@ -121,8 +121,8 @@ It keeps a reference to the pact resource, so the pact handle lives as long as t
 
 | File | Responsibility |
 |---|---|
-| `handles.rs` | `PactResource` / `InteractionResource` (Rustler resources). `Drop` frees the pact handle. An interaction keeps its pact alive. NIFs: `new_pact`, `with_specification`, `new_interaction`, `given`, `given_with_params`. |
-| `http.rs` | Request and response builders: `with_request`, `with_query_parameter`, `with_header`, `with_body`, `with_binary_body`, `response_status`. |
+| `handles.rs` | `PactResource` / `InteractionResource` (Rustler resources). `Drop` hands the pact to a background reaper thread, which cleans up its plugins (once) and frees the handle. An interaction keeps its pact alive. NIFs, all on dirty IO schedulers: `new_pact`, `with_specification`, `new_interaction`, `given`, `given_with_params`. |
+| `http.rs` | Request and response builders: `with_request`, `with_query_parameter`, `with_header`, `with_body`, `with_binary_body`, `response_status`. All on dirty IO schedulers. |
 | `mock_server.rs` | `create_mock_server`, `mock_server_matched`, `mock_server_mismatches`, `write_pact_file`, `cleanup_mock_server`. All on dirty IO schedulers. A crate-level mutex serialises reading mismatches and cleanup. |
 | `content_type.rs` | Pure helpers that reuse pact_models and serde_json: `content_type_kind` (parse and classify a content type), `detect_json` (pact_models' JSON sniffing) and `json_text_shape` (serde_json parse). The last two run on dirty CPU schedulers. |
 | `logger.rs` | `init_logger`: logger init, attach sink and apply, in one call. |
@@ -172,7 +172,7 @@ Not implemented yet. Provider verification is planned (see [Roadmap](#roadmap)).
 
 ## Threading and Safety
 
-- **Dirty schedulers:** NIFs that block or take a pact_ffi mutex across I/O run on dirty IO schedulers: mock server creation, matching, mismatches, writing, cleanup and logger init. The JSON sniffing and parsing helpers run on dirty CPU schedulers, because bodies can be large.
+- **Dirty schedulers:** NIFs that block or take a pact_ffi mutex across I/O run on dirty IO schedulers: mock server creation, matching, mismatches, writing, cleanup and logger init, and every builder NIF (they wait for pact_ffi's global `PACT_HANDLES` mutex, which it holds across plugin round trips). Freeing a pact happens on a background reaper thread, not on the scheduler that drops the resource. The JSON sniffing and parsing helpers run on dirty CPU schedulers, because bodies can be large.
 - **Large stack:** blocking calls run inside `on_large_stack/1` (an 8 MiB thread). Futures that pact_ffi drives with `block_on` run their outer frames on the calling thread, and dirty scheduler stacks are small.
 - **Thread-local errors:** pact_ffi stores its last error message in a thread-local. Each fallible NIF calls `clear_error`, the FFI function and `last_error` on the same thread, inside the same NIF call (inside `on_large_stack` when one is used).
 - **Use after free:** the mismatches string is owned by the mock server manager. A crate mutex is held across the mismatches read and copy, and across cleanup.
@@ -211,7 +211,7 @@ Not implemented yet. Provider verification is planned (see [Roadmap](#roadmap)).
 3. **Elixir** wraps error maps in `%PactEx.Error{}`. `run/4` returns `{:error, %PactEx.Error{}}` or `{:error, %PactEx.MismatchError{}}`, and `run!/4` raises them.
 
 ### Resources
-- Pact handles are freed by the resource destructor when the last reference is garbage collected.
+- Pact handles are released when the last reference is garbage collected. The resource destructor does not free the pact itself: it hands it to the `pact_ex_reaper` thread, which cleans up the pact's plugins (once) and then frees it, asynchronously. Explicit `cleanup_plugins` is still the way to stop plugin processes promptly.
 - Mock servers are stopped by `run/4` in an `after` block, or explicitly with `MockServer.stop/1`. A brutal kill (an ExUnit timeout or a linked crash) skips `after`, and the server lives until the OS process exits.
 
 ## Configuration
@@ -228,8 +228,8 @@ Not implemented yet. Provider verification is planned (see [Roadmap](#roadmap)).
 
 | Location | Scope |
 |---|---|
-| `native/pact_ex_nif/src/*.rs` (`cargo test`) | Rust unit tests: error mapping, the large stack, the lock, content type helpers, logger messages. |
-| `test/pact_ex/native/` | Each NIF, its success path and every error path, against the real pact_ffi. |
+| `native/pact_ex_nif/src/*.rs` (`cargo test`) | Rust unit tests: error mapping, the large stack, the lock, content type helpers, logger messages, the reaper thread and the cleanup-once guard. One `#[ignore]` test needs the protobuf plugin 0.8.1 installed: `cargo test -- --ignored`. |
+| `test/pact_ex/native/` | The NIFs against the real pact_ffi: success and error paths, large bodies, mock server queries. `scheduler_test.exs` checks that builder NIFs run on dirty IO schedulers, measured with microstate accounting. |
 | `test/pact_ex/` | Builders, matchers, `Apply`, `BodyCheck`, `Consumer`, `MockServer`, `Log`, end to end with a real mock server, Req and checks of the pact file. |
 | `test/acceptance/` | The pact_erlang HTTP parity suite, an end-to-end test per matcher, concurrent writes of the same pact file. |
 | `test/abort_matrix_test.exs` | Risky inputs, each in its own OS process, with a pinned outcome. |

@@ -7,9 +7,13 @@ use pact_ffi::mock_server::handles::{
 use pact_ffi::plugins::pactffi_cleanup_plugins;
 use rustler::{NifResult, NifUnitEnum, Resource, ResourceArc, Term};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::OnceLock;
+use std::thread;
 
 use crate::args::{arg_cstring, decode_arg};
 use crate::error::{clear_error, last_error, to_cstring, Outcome};
+use crate::stack::LARGE_STACK;
 
 pub struct PactResource {
     pub handle: PactHandle,
@@ -18,24 +22,30 @@ pub struct PactResource {
 }
 
 impl PactResource {
-    /// Cleans up the plugins of this pact, on the first call only. Returns
-    /// whether this call did the cleanup.
+    /// Claims the plugin cleanup of this pact. Returns true to the first call
+    /// only.
     ///
     /// `pactffi_cleanup_plugins` lowers a global per-plugin access count on
     /// every call and does not check whether the pact was already cleaned up.
     /// A second call would shut down a plugin process that another pact still
     /// uses. So the guard lives here, next to the handle.
-    pub fn cleanup_plugins_once(&self) -> bool {
-        if self
-            .plugins_cleaned
+    fn claim_plugin_cleanup(&self) -> bool {
+        self.plugins_cleaned
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-        {
+    }
+
+    /// Cleans up the plugins of this pact, on the first call only. Returns
+    /// whether this call did the cleanup.
+    // Nothing calls this until the `cleanup_plugins` NIF of plan 2. `Drop` goes
+    // through `claim_plugin_cleanup` and cleans up on the reaper thread.
+    #[allow(dead_code)]
+    pub fn cleanup_plugins_once(&self) -> bool {
+        let claimed = self.claim_plugin_cleanup();
+        if claimed {
             pactffi_cleanup_plugins(self.handle);
-            true
-        } else {
-            false
         }
+        claimed
     }
 }
 
@@ -44,11 +54,56 @@ impl Resource for PactResource {}
 
 impl Drop for PactResource {
     fn drop(&mut self) {
-        // Cleanup reads the plugins recorded in the pact, so the handle must
-        // still exist.
-        self.cleanup_plugins_once();
-        pactffi_free_pact_handle(self.handle);
+        hand_to_reaper(self.handle, self.claim_plugin_cleanup());
     }
+}
+
+/// A pact to clean up and free: its handle, and whether its plugins still need
+/// cleaning up.
+type Reap = (PactHandle, bool);
+
+static REAPER: OnceLock<Option<Sender<Reap>>> = OnceLock::new();
+
+/// Frees a pact on the reaper thread, so that the thread that dropped it does
+/// not wait for pact_ffi's global `PACT_HANDLES` mutex (held across plugin
+/// round trips) or for `PLUGIN_REGISTER` (held across plugin start-up). Drop
+/// runs on whatever scheduler thread collects the resource, often a normal one.
+///
+/// If the reaper cannot be started or has stopped, frees the pact here.
+fn hand_to_reaper(handle: PactHandle, cleanup_due: bool) {
+    let sender = REAPER.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<Reap>();
+        thread::Builder::new()
+            .name("pact_ex_reaper".into())
+            // The plugin driver runs futures with `block_on` on this thread.
+            .stack_size(LARGE_STACK)
+            .spawn(move || {
+                for (handle, cleanup_due) in receiver {
+                    reap(handle, cleanup_due);
+                }
+            })
+            .ok()
+            .map(|_| sender)
+    });
+    match sender
+        .as_ref()
+        .map(|sender| sender.send((handle, cleanup_due)))
+    {
+        Some(Ok(())) => {}
+        _ => reap(handle, cleanup_due),
+    }
+}
+
+/// Cleans up the plugins of a pact if that is still due, then frees its handle.
+fn reap(handle: PactHandle, cleanup_due: bool) {
+    // Cleanup reads the plugins recorded in the pact, so the handle must still
+    // exist.
+    if cleanup_due {
+        pactffi_cleanup_plugins(handle);
+    }
+    pactffi_free_pact_handle(handle);
+    #[cfg(test)]
+    tests::record_reaped(handle);
 }
 
 pub struct InteractionResource {
@@ -78,7 +133,10 @@ impl From<Spec> for pact_models::PactSpecification {
     }
 }
 
-#[rustler::nif]
+// DirtyIo: every builder NIF takes pact_ffi's global `PACT_HANDLES` mutex, which
+// pact_ffi holds across plugin round trips that can take seconds. Waiting for
+// it must not stall a normal scheduler.
+#[rustler::nif(schedule = "DirtyIo")]
 fn new_pact(consumer: String, provider: String) -> NifResult<ResourceArc<PactResource>> {
     let consumer = arg_cstring(&consumer)?;
     let provider = arg_cstring(&provider)?;
@@ -89,7 +147,7 @@ fn new_pact(consumer: String, provider: String) -> NifResult<ResourceArc<PactRes
     }))
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn with_specification(pact: ResourceArc<PactResource>, spec: Term) -> NifResult<Outcome> {
     let spec: Spec = decode_arg(spec)?;
     clear_error();
@@ -100,7 +158,7 @@ fn with_specification(pact: ResourceArc<PactResource>, spec: Term) -> NifResult<
     }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn new_interaction(
     pact: ResourceArc<PactResource>,
     description: String,
@@ -110,7 +168,7 @@ fn new_interaction(
     Ok(ResourceArc::new(InteractionResource { handle, pact }))
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn given(interaction: ResourceArc<InteractionResource>, state: String) -> Outcome {
     const NAME: &str = "pactffi_given";
     let result = to_cstring(NAME, &state).and_then(|state| {
@@ -124,7 +182,7 @@ fn given(interaction: ResourceArc<InteractionResource>, state: String) -> Outcom
     result.into()
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn given_with_params(
     interaction: ResourceArc<InteractionResource>,
     state: String,
@@ -149,6 +207,35 @@ mod tests {
     use pact_ffi::mock_server::handles::{pactffi_new_message_interaction, InteractionPart};
     use pact_ffi::plugins::{pactffi_interaction_contents, pactffi_using_plugin};
     use std::ffi::CString;
+    use std::sync::Mutex;
+    use std::thread::ThreadId;
+    use std::time::{Duration, Instant};
+
+    /// Where each pact was freed: the key is the handle's debug text, because
+    /// pact_ffi does not expose the handle's number.
+    static REAPED: Mutex<Vec<(String, ThreadId, Option<String>)>> = Mutex::new(Vec::new());
+
+    pub(super) fn record_reaped(handle: PactHandle) {
+        let thread = std::thread::current();
+        REAPED.lock().unwrap().push((
+            format!("{handle:?}"),
+            thread.id(),
+            thread.name().map(String::from),
+        ));
+    }
+
+    /// Waits until `handle` has been freed and returns the thread that did it.
+    fn reaped_on(handle: PactHandle) -> (ThreadId, Option<String>) {
+        let key = format!("{handle:?}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some((_, id, name)) = REAPED.lock().unwrap().iter().find(|(k, ..)| *k == key) {
+                return (*id, name.clone());
+            }
+            assert!(Instant::now() < deadline, "pact {key} was never freed");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     fn v4_pact(consumer: &str, provider: &str) -> PactResource {
         let consumer = CString::new(consumer).unwrap();
@@ -179,6 +266,36 @@ mod tests {
     /// Gives a plugin that is shutting down time to exit.
     fn settle() {
         std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn dropping_a_pact_frees_it_on_the_reaper_thread() {
+        let pact = v4_pact("consumer", "provider");
+        let handle = pact.handle;
+        let key = format!("{handle:?}");
+        REAPED.lock().unwrap().retain(|(k, ..)| *k != key);
+        drop(pact);
+
+        let (thread, name) = reaped_on(handle);
+        assert_ne!(thread, std::thread::current().id());
+        assert_eq!(name.as_deref(), Some("pact_ex_reaper"));
+        // Freed: pact_ffi reports 1 for a handle that does not exist.
+        assert_eq!(pactffi_free_pact_handle(handle), 1);
+    }
+
+    #[test]
+    fn reap_frees_the_handle_on_the_calling_thread() {
+        // The fallback when the reaper thread is unavailable.
+        let pact = v4_pact("consumer", "provider");
+        let handle = pact.handle;
+        let key = format!("{handle:?}");
+        REAPED.lock().unwrap().retain(|(k, ..)| *k != key);
+        // Skip Drop, so that only the `reap` call below frees the handle.
+        std::mem::forget(pact);
+        reap(handle, false);
+
+        assert_eq!(reaped_on(handle).0, std::thread::current().id());
+        assert_eq!(pactffi_free_pact_handle(handle), 1);
     }
 
     #[test]
@@ -243,11 +360,15 @@ mod tests {
             assert_eq!(code, 0);
             assert_eq!(plugin_pids(), running, "plugin was restarted for B");
 
-            // Dropping B cleans up its plugins, so no plugin process stays behind.
+            // Dropping B cleans up its plugins, on the reaper thread, so no
+            // plugin process stays behind once the reaper has caught up.
             drop(b);
             drop(a);
-            settle();
-            assert!(plugin_pids().is_empty(), "plugin left running after drop");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !plugin_pids().is_empty() {
+                assert!(Instant::now() < deadline, "plugin left running after drop");
+                std::thread::sleep(Duration::from_millis(100));
+            }
         });
     }
 }
