@@ -300,6 +300,13 @@ mix deps.get
 mix test
 ```
 
+CI also runs Credo and Dialyzer. Run them locally with:
+
+```sh
+mix credo
+mix dialyzer
+```
+
 ## Supported platforms
 
 Precompiled NIFs exist for NIF versions 2.16 (OTP 25) and 2.17 (OTP 26, 27 and

@@ -14,6 +14,12 @@ defmodule PactEx.MixProject do
       deps: deps(),
       description: "Pact contract testing for Elixir, built on the pact_ffi Rust library.",
       package: package(),
+      dialyzer: [
+        # Cached in CI, see .github/workflows/ci.yml.
+        plt_local_path: "priv/plts/project",
+        plt_core_path: "priv/plts/core",
+        flags: [:error_handling, :unmatched_returns, :extra_return, :missing_return]
+      ],
       source_url: @source_url,
       docs: [
         main: "readme",
@@ -37,7 +43,9 @@ defmodule PactEx.MixProject do
       {:rustler_precompiled, "~> 0.10"},
       {:rustler, "~> 0.38", optional: true},
       {:req, "~> 0.5", only: :test},
-      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

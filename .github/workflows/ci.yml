@@ -63,3 +63,41 @@ jobs:
       # Includes the abort matrix (test/abort_matrix_test.exs, tag
       # :abort_matrix), which runs each risky input in its own OS process.
       - run: mix test
+
+  lint:
+    name: Credo and Dialyzer
+    runs-on: ubuntu-latest
+    env:
+      PACT_EX_BUILD: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - id: beam
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+
+      # Dialyzer needs the compiled project, and that builds the NIF.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: native/pact_ex_nif
+
+      - run: mix deps.get
+
+      # Strict mode and the enabled checks are set in .credo.exs.
+      - run: mix credo
+
+      # Building the PLTs from scratch takes minutes. The key changes with the
+      # OTP and Elixir versions and with mix.lock; an older PLT is restored and
+      # updated when only mix.lock changed.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: priv/plts
+          key: plt-${{ runner.os }}-otp${{ steps.beam.outputs.otp-version }}-elixir${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            plt-${{ runner.os }}-otp${{ steps.beam.outputs.otp-version }}-elixir${{ steps.beam.outputs.elixir-version }}-
+
+      - run: mix dialyzer --format github
