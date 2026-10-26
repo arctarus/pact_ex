@@ -6,7 +6,7 @@ use pact_ffi::mock_server::handles::{
 };
 use rustler::{NifResult, NifUnitEnum, Resource, ResourceArc, Term};
 
-use crate::args::decode_arg;
+use crate::args::{arg_cstring, decode_arg};
 use crate::error::{clear_error, last_error, to_cstring, Outcome};
 
 pub struct PactResource {
@@ -47,11 +47,6 @@ impl From<Spec> for pact_models::PactSpecification {
             Spec::V4 => pact_models::PactSpecification::V4,
         }
     }
-}
-
-/// Raised as `ArgumentError`: a NUL byte in these arguments is a caller bug.
-fn arg_cstring(s: &str) -> NifResult<std::ffi::CString> {
-    std::ffi::CString::new(s).map_err(|_| rustler::Error::BadArg)
 }
 
 #[rustler::nif]

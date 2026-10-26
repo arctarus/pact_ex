@@ -9,16 +9,10 @@ use pact_ffi::mock_server::{
 };
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
 
+use crate::args::port_arg;
 use crate::error::{clear_error, failure_with, to_cstring, FfiError, Outcome};
 use crate::handles::PactResource;
 use crate::stack::on_large_stack;
-
-/// Rustler decodes `u16` with a truncating cast, so a port above 65535 would
-/// silently wrap. Decode as `i64` and range-check instead; a port outside
-/// `0..=65535` is a caller bug and raises `ArgumentError`.
-fn port_arg(port: i64) -> NifResult<u16> {
-    u16::try_from(port).map_err(|_| rustler::Error::BadArg)
-}
 
 /// Serialises reading a mock server's mismatches and cleaning it up.
 ///
