@@ -318,7 +318,7 @@ The test of a protobuf body over HTTP needs a real plugin and `Routeguide.Featur
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `mix test test/pact_ex/plugin_test.exs`
-Expected: FAIL with `PactEx.using_plugin/2 is undefined`.
+Expected: FAIL. The test file does not compile: it matches on `%PactEx.PluginContents{}`, which does not exist yet (`cannot expand struct PactEx.PluginContents`). A compile error is the red state here. The `using_plugin/3` and `contents/2` calls would fail with `undefined function` once it compiled.
 
 - [ ] **Step 4: Implement everything listed in Interfaces**
 
@@ -486,7 +486,7 @@ end
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `mix test test/pact_ex/message_test.exs`
-Expected: FAIL with `PactEx.Message.new/1 is undefined`.
+Expected: FAIL. The test file does not compile: it matches on `%Message.Reified{}` (`cannot expand struct PactEx.Message.Reified`). A compile error is the red state here. `PactEx.Message.new/1` would be the next failure (`undefined function`).
 
 - [ ] **Step 3: Implement `PactEx.Message` and `PactEx.Message.Runner`**
 
@@ -592,7 +592,7 @@ end
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `mix test test/pact_ex/sync_message_test.exs`
-Expected: FAIL with `PactEx.SyncMessage.new/1 is undefined`.
+Expected: FAIL. The test file does not compile: it matches on `%SyncMessage.Generated{}` (`cannot expand struct PactEx.SyncMessage.Generated`). A compile error is the red state here. `PactEx.SyncMessage.new/1` would be the next failure (`undefined function`).
 
 - [ ] **Step 3: Implement `PactEx.SyncMessage` and its runner for `transport: nil`**
 
