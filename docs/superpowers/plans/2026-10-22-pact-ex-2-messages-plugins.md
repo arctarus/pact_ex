@@ -309,33 +309,10 @@ defmodule PactEx.PluginTest do
 
     assert :ok = PactEx.Consumer.Apply.validate(i)
   end
-
-  @tag :plugin
-  @tag :tmp_dir
-  test "HTTP response with a protobuf body via the plugin", %{tmp_dir: dir} do
-    proto = Path.expand("../fixtures/route_guide.proto", __DIR__)
-    pact = PactEx.new("plugin-http-consumer", "plugin-http-provider", pact_dir: dir) |> PactEx.using_plugin("protobuf", "0.8.1")
-
-    body =
-      Plugin.contents("application/protobuf", %{
-        "pact:proto" => proto,
-        "pact:message-type" => "Feature",
-        "pact:content-type" => "application/protobuf",
-        "name" => "notEmpty('Big Tree')"
-      })
-
-    i = HTTP.interaction("get feature") |> HTTP.with_request(:get, "/feature") |> HTTP.will_respond_with(200, body: body)
-
-    assert :ok =
-             Consumer.run(pact, [i], fn m ->
-               resp = Req.get!(m.url <> "/feature", decode_body: false)
-               assert %Routeguide.Feature{name: "Big Tree"} = Routeguide.Feature.decode(resp.body)
-             end)
-  end
 end
 ```
 
-The last test needs `Routeguide.Feature`, which Task 5 creates. Until then, keep it tagged and also add `@tag :skip`. Task 5 removes that `@tag :skip`.
+The test of a protobuf body over HTTP needs a real plugin and `Routeguide.Feature`, so it lives in Task 5.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -347,7 +324,7 @@ Expected: FAIL with `PactEx.using_plugin/2 is undefined`.
 - [ ] **Step 5: Run tests to verify they pass, and that plan 1 still passes**
 
 Run: `mix test`
-Expected: PASS (the plugin test is skipped).
+Expected: PASS. `plugin_test.exs` has 6 tests, and none of them needs an installed plugin.
 
 - [ ] **Step 6: Commit**
 
@@ -642,8 +619,8 @@ git commit -m "feat: add synchronous message consumer"
 
 **Files:**
 - Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules)
-- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change), `lib/pact_ex/sync_message/runner.ex`, `test/pact_ex/plugin_test.exs` (remove `@tag :skip`)
-- Test: `test/acceptance/grpc_consumer_test.exs`
+- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change), `lib/pact_ex/sync_message/runner.ex`
+- Test: `test/acceptance/grpc_consumer_test.exs`, `test/acceptance/protobuf_http_test.exs`
 
 **Interfaces:**
 - Consumes: Task 4 `SyncMessage.run/4`, the plan 1 NIFs `create_mock_server/5`, `mock_server_matched/1`, `mock_server_mismatches/1`, `write_pact_file/3` and `cleanup_mock_server/1`, and plan 1 `PactEx.MismatchError`. Also `PactEx.MockServer.matched?/1`, `PactEx.MockServer.mismatches/1` and `PactEx.Consumer.verdict/2` (a `@doc false` public function), which `Consumer.run/4` uses to decide.
@@ -736,6 +713,40 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
 end
 ```
 
+The test moved from Task 2, a protobuf body in an HTTP response. It only needs Task 2 and the `Routeguide` modules, so it passes in Step 3 already:
+
+```elixir
+# test/acceptance/protobuf_http_test.exs
+defmodule PactEx.Acceptance.ProtobufHttpTest do
+  use ExUnit.Case, async: false
+  alias PactEx.{Consumer, HTTP, Plugin}
+
+  @moduletag :plugin
+  @moduletag :tmp_dir
+
+  test "HTTP response with a protobuf body via the plugin", %{tmp_dir: dir} do
+    proto = Path.expand("../fixtures/route_guide.proto", __DIR__)
+    pact = PactEx.new("plugin-http-consumer", "plugin-http-provider", pact_dir: dir) |> PactEx.using_plugin("protobuf", "0.8.1")
+
+    body =
+      Plugin.contents("application/protobuf", %{
+        "pact:proto" => proto,
+        "pact:message-type" => "Feature",
+        "pact:content-type" => "application/protobuf",
+        "name" => "notEmpty('Big Tree')"
+      })
+
+    i = HTTP.interaction("get feature") |> HTTP.with_request(:get, "/feature") |> HTTP.will_respond_with(200, body: body)
+
+    assert :ok =
+             Consumer.run(pact, [i], fn m ->
+               resp = Req.get!(m.url <> "/feature", decode_body: false)
+               assert %Routeguide.Feature{name: "Big Tree"} = Routeguide.Feature.decode(resp.body)
+             end)
+  end
+end
+```
+
 **How the plugin reports a call that never came (spike S1, read from source; not run against the installed plugin).** The protobuf plugin 0.8.1 does report it, so the "never called" test above is expected to pass as written.
 - At server start the plugin registers every route as `(0 requests, no results)` (`pact-protobuf-plugin` tag `v-0.8.1`, `src/mock_server.rs:204-209`). The route key is `/<package>.<Service>/<Method>`, here `/routeguide.RouteGuide/GetFeature` (`build_grpc_route`, `src/utils.rs:624-637`).
 - `GetMockServerResults` (`src/server.rs:860-871`) builds one `MockServerResult` per route (`get_mock_server_results`, `src/server.rs:116-190`). A route with 0 requests gets `path` = the route and `error` = `"Did not receive any requests for path '<route>'"`. A route that got requests gets `error` = `""` and one `mismatches` entry per body or metadata mismatch (`path`, `mismatch`, `expected`, `actual`). The upstream test `tests/mock_server_tests.rs:49-62` asserts this message for an uncalled route.
@@ -753,12 +764,14 @@ end
 - The generated-code API is unchanged for our handwritten modules: `use GRPC.Service, name: "routeguide.RouteGuide"` (allowed options: `:name`, `:protoc_gen_elixir_version`), `rpc :GetFeature, Req, Res`, `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, which defines `get_feature/2,3` (`stub.ex:49-162`).
 - Open points: the locked `gun` 2.4.1 carries advisory GHSA-w4f7-4cxr-rv3c (HTTP request/response splitting; `mix deps.get` prints it). `grpc` 1.0.5 pins `gun ~> 2.4.0`, so we cannot move to a fixed gun. The risk is limited to a test-only client talking to `127.0.0.1`. `GRPC.Client.Adapters.Mint` with `{:mint, "~> 1.9"}` is the alternative if that matters. We did not run the client against the plugin mock server (it needs plain HTTP/2 without TLS, which the Gun adapter uses by default).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Add the test deps and write `test/support/route_guide.ex`**
 
-Run: `scripts/install-protobuf-plugin.sh && mix test test/acceptance/grpc_consumer_test.exs`
-Expected: FAIL with `ArgumentError: transport support lands in Task 5` (the `Routeguide` modules are not defined yet, so compilation fails first. Create the empty file in Step 3 before re-running).
+Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile.
 
-- [ ] **Step 3: Write `test/support/route_guide.ex`** with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`.
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `scripts/install-protobuf-plugin.sh && mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`
+Expected: the 4 gRPC tests FAIL with the `ArgumentError: transport support lands in Task 5` that Task 4 raises. The protobuf HTTP test PASSES.
 
 - [ ] **Step 4: Implement the transport branch of `SyncMessage.run/4`**
 
@@ -773,8 +786,8 @@ The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove 
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test test/acceptance/grpc_consumer_test.exs test/pact_ex/plugin_test.exs`
-Expected: PASS (4 + 5 tests).
+Run: `mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`
+Expected: PASS (4 + 1 tests).
 
 - [ ] **Step 6: Commit**
 
