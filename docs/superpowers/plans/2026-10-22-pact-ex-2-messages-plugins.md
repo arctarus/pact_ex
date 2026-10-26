@@ -361,7 +361,7 @@ git commit -m "feat: add plugin loading and plugin contents for HTTP interaction
   - `PactEx.Message.given(msg, state, params \\ nil) :: t()`
   - `PactEx.Message.with_contents(msg, contents, opts \\ []) :: t()` with the opt `content_type`. `contents` may be a map/list (JSON), a binary or a `%PluginContents{}`.
   - `PactEx.Message.with_metadata(msg, map) :: t()` merges into `metadata`.
-  - `%PactEx.Message.Reified{contents: term(), metadata: map(), content_type: String.t() | nil}`. `contents` is decoded JSON for JSON content types and raw bytes otherwise, and `nil` for JSON `null` (see step 6 of the runner).
+  - `%PactEx.Message.Reified{contents: term(), metadata: map(), content_type: String.t() | nil}`. `contents` is decoded JSON for JSON content types and raw bytes otherwise, and `nil` for JSON `null` (see step 6 of the runner). Text with a JSON content type that is not valid JSON is raw bytes too. The moduledoc says so.
   - `PactEx.Message.run(Pact.t(), t(), (Reified.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}`. It returns a `-101` `%PactEx.Error{function: "PactEx.Message.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when the message has no contents, that is, `contents` is `nil` or `""`, or when the contents are a `%PluginContents{}` and `pact.plugins == []` (the Task 2 rule). `pactffi_message_reify` returns the V3 message shape for a pact with spec V3 or lower: no `contents.content` envelope, so the decoding below would be wrong. A message without contents reifies to `""`, which pact_ffi reports without a stored error message, so we check in Elixir instead. An empty string counts as no contents: `plan_body("")` gives `{:text, "text/plain", ""}`, pact_ffi turns that into an empty body, and reify returns `""` for it too.
   - `PactEx.Message.run!(...) :: :ok`
 
@@ -471,6 +471,16 @@ defmodule PactEx.MessageTest do
     refute File.exists?(Path.join(dir, "msg-consumer-msg-provider.json"))
   end
 
+  test "a JSON content type with text that is not JSON arrives as raw bytes", %{pact: pact} do
+    msg = Message.new("bad json") |> Message.with_contents("{bad", content_type: "application/json")
+
+    assert :ok =
+             Message.run(pact, msg, fn r ->
+               assert r.contents == "{bad"
+               assert r.content_type =~ "application/json"
+             end)
+  end
+
   test "plain text contents keep their content type", %{pact: pact} do
     msg = Message.new("text") |> Message.with_contents("hello", content_type: "text/plain")
 
@@ -530,7 +540,7 @@ Expected: FAIL. The test file does not compile: it matches on `%Message.Reified{
 3. `new_message_interaction`, then one `given` (no params) or `given_with_params` (the JSON planned in step 0) per provider state.
 4. Contents. The runner handles `%PluginContents{}` itself, through `interaction_contents(i, :request, content_type, json)` with the JSON planned in step 0. Any other contents are planned with `Apply.plan_body(contents, msg.content_type, "message contents", "PactEx.Message.run/4")`, and the plan is applied with `with_body` or `with_binary_body` on `:request`. The planning, and the check that a `:content_type` option does not name a different media type than the plugin contents (a `-101` error, same rule as Task 2), happen before the first native call, so an invalid body fails without touching pact_ffi. This step only applies the result.
 5. One `with_metadata(i, k, json, :request)` per metadata entry, with the JSON planned in step 0. Every value is JSON-encoded, strings included. `pactffi_with_metadata` parses each value as JSON first and falls back to a string only on failure, so a raw `"5"`, `"true"` or `"null"` would become a number, a boolean and null. Encoded, the string `5` is sent as the JSON text `"5"` (with quotes) and stays a string. Matcher maps are encoded the same way. Metadata is applied after the contents (step 4) because `pactffi_interaction_contents` replaces the metadata of an async message, so plugin contents would wipe it otherwise.
-6. `message_reify`, then decode into `%Reified{}`. A bare `"null"` result has no envelope: decode it to `%Reified{contents: nil, metadata: %{}, content_type: nil}`. `with_body` never makes a Null body, so no test can reach this branch. It is defensive, so that a body made another way does not crash the decoding. For a V4 body envelope `%{"content" => c, "contentType" => ct, "encoded" => enc}`: when `enc == "base64"`, use `Base.decode64!(c)`. When `enc` is `false` or `"json"`, use `c` as is. An empty body has the envelope `%{"content" => ""}`, without `contentType` or `encoded` (`OptionalBody::Empty` in `pact_models` `bodies.rs:176`): decode it to `""` with a `nil` content type. Async reify never returns it (it returns `""` instead), but sync messages share this decoding (Task 4), so it must not crash there.
+6. `message_reify`, then decode into `%Reified{}`. A bare `"null"` result has no envelope: decode it to `%Reified{contents: nil, metadata: %{}, content_type: nil}`. `with_body` never makes a Null body, so no test can reach this branch. It is defensive, so that a body made another way does not crash the decoding. For a V4 body envelope `%{"content" => c, "contentType" => ct, "encoded" => enc}`: when `enc == "base64"`, use `Base.decode64!(c)`. For any other `enc`, use `c` as is. pact_models 1.3.17 only writes `false` and `"base64"` (`bodies.rs:145-160`). It writes base64 for binary content types and also for a body with a JSON content type that is not valid JSON, so such a body reaches `fun` as the raw bytes, not as decoded JSON. An empty body has the envelope `%{"content" => ""}`, without `contentType` or `encoded` (`OptionalBody::Empty` in `pact_models` `bodies.rs:176`): decode it to `""` with a `nil` content type. Async reify never returns it (it returns `""` instead), but sync messages share this decoding (Task 4), so it must not crash there.
 7. Call `fun.(reified)`.
 8. On normal return, `pact_handle_write_file(pact_ref, pact_dir, false)`.
 9. `Plugin.cleanup(pact_ref)` in `after`.
@@ -540,7 +550,7 @@ An exception from `fun` propagates without writing.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`
-Expected: PASS (10 tests).
+Expected: PASS (11 tests).
 
 - [ ] **Step 5: Commit**
 
