@@ -202,6 +202,18 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
+  @doc false
+  # Checks `content_type`, the explicit type given next to plugin contents (for
+  # example a message's `:content_type` option), against the type of the
+  # contents. Same rule as for an HTTP part: case and parameters do not count.
+  @spec check_plugin_content_type(PluginContents.t(), String.t() | nil, String.t(), String.t()) ::
+          :ok | {:error, Error.t()}
+  def check_plugin_content_type(%PluginContents{} = contents, content_type, label, entry_point) do
+    contents
+    |> check_plugin_type([content_type], label)
+    |> with_entry_point(entry_point)
+  end
+
   # The content type of plugin contents wins. Another explicit type or header
   # that names a different media type would be ignored without a word, so it is
   # an error. Parameters (`; charset=...`) and case do not count.

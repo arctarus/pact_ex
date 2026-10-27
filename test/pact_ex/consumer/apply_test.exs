@@ -582,4 +582,32 @@ defmodule PactEx.Consumer.ApplyTest do
       assert message =~ ~s(cannot encode metadata "k" of message "m" as JSON)
     end
   end
+
+  describe "check_plugin_content_type/4" do
+    @entry_message "PactEx.Message.run/4"
+    @plugin_contents PactEx.Plugin.contents("application/protobuf", %{"a" => 1})
+
+    defp check_type(type),
+      do:
+        Apply.check_plugin_content_type(
+          @plugin_contents,
+          type,
+          "message contents",
+          @entry_message
+        )
+
+    test "no type, the same type, and the same media type in another case or with parameters are accepted" do
+      assert :ok = check_type(nil)
+      assert :ok = check_type("application/protobuf")
+      assert :ok = check_type(" Application/Protobuf ; charset=utf-8")
+    end
+
+    test "another media type is rejected with the entry point" do
+      assert {:error, %PactEx.Error{code: -101, function: @entry_message, message: message}} =
+               check_type("application/json")
+
+      assert message =~ "message contents"
+      assert message =~ "application/json"
+    end
+  end
 end
