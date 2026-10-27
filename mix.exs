@@ -63,7 +63,7 @@ defmodule PactEx.MixProject do
       precommit: [
         "compile --warnings-as-errors",
         "format --check-formatted",
-        "credo",
+        "credo --strict",
         "dialyzer",
         "test"
       ]
