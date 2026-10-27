@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status:** Written before plan 1 was implemented. Review this plan against the real plan 1 code (module names, NIF signatures, `Outcome`/`FfiError`, the `run/4` shape) before executing it.
+> **Status:** Reviewed three times against the plan 1 code (the last time against `main` at f19ddff). Ready to execute.
 
 **Goal:** Add async messages (pact_erlang parity), sync messages, and the Pact plugin system to `pact_ex`. That covers loading plugins, plugin-driven contents and plugin transports, with the protobuf plugin's gRPC transport as the acceptance case.
 
@@ -17,6 +17,7 @@
 ## Global Constraints
 
 - Every plan 1 Global Constraint applies, including the test-coverage rule: unit tests for every new function or NIF and its error paths, plus end-to-end tests. Here end-to-end means a real `Message.run` or `SyncMessage.run`, a real gRPC client against the plugin mock server, and assertions on the written pact.
+- Every task leaves the code passing `mix precommit`. It runs `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict` and `dialyzer`, then `mix test`. Credo's Specs and ModuleDoc checks apply: every new public function in `lib/` needs a `@spec` and every new module a `@moduledoc`. The snippets in this plan are not wrapped to the formatter's line length, so run `mix format` before `mix precommit`. A task that changes `native/` also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` in `native/pact_ex_nif`, the same as CI.
 - Protobuf plugin version `0.8.1`. Install it under `${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-0.8.1` with `scripts/install-protobuf-plugin.sh`.
 - A plugin that is not on disk is installed automatically. pact-plugin-driver does not stop at "not found": it fetches the pact-plugins index from GitHub and installs the plugin if the index lists it. We keep this behaviour and do not add an `installed?` check before loading. Consequences, documented in the README (Task 7):
   - A test run that needs a missing plugin needs network access.
@@ -212,8 +213,8 @@ Expected: FAIL with `PactEx.Native.new_message_interaction/2 is undefined or pri
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/plugins_test.exs test/pact_ex/native/scheduler_test.exs`
-Expected: PASS (3 + 2 + 2 tests). The plugin tests run without any plugin installed. The first one still reaches for the plugin index (see the auto-install constraint).
+Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/plugins_test.exs test/pact_ex/native/scheduler_test.exs`, then `mix precommit`, then, in `native/pact_ex_nif`, `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+Expected: PASS (3 + 2 + 2 tests), and the other checks are clean. The plugin tests run without any plugin installed. The first one still reaches for the plugin index (see the auto-install constraint).
 
 - [ ] **Step 6: Commit**
 
@@ -268,7 +269,7 @@ Copy `route_guide.proto` from pact-go `examples/grpc/routeguide/route_guide.prot
 # test/pact_ex/plugin_test.exs
 defmodule PactEx.PluginTest do
   use ExUnit.Case, async: false
-  alias PactEx.{Consumer, HTTP, Plugin}
+  alias PactEx.{Consumer, Consumer.Apply, HTTP, Plugin}
 
   test "using_plugin/3 accumulates plugins in order" do
     pact = PactEx.new("c", "p") |> PactEx.using_plugin("protobuf", "0.8.1") |> PactEx.using_plugin("csv")
@@ -309,7 +310,7 @@ defmodule PactEx.PluginTest do
     body = Plugin.contents("application/protobuf", %{"a" => 1})
     i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200, body: body, content_type: "application/protobuf")
 
-    assert :ok = PactEx.Consumer.Apply.validate(i)
+    assert :ok = Apply.validate(i)
   end
 
   test "plugin contents in a pact without plugins are rejected before any native call" do
@@ -335,8 +336,8 @@ Expected: FAIL. The test file does not compile: it matches on `%PactEx.PluginCon
 
 - [ ] **Step 5: Run tests to verify they pass, and that plan 1 still passes**
 
-Run: `mix test`
-Expected: PASS. `plugin_test.exs` has 7 tests, and none of them needs an installed plugin.
+Run: `mix test`, then `mix precommit`.
+Expected: PASS, and the other checks are clean. `plugin_test.exs` has 7 tests, and none of them needs an installed plugin.
 
 - [ ] **Step 6: Commit**
 
@@ -549,8 +550,8 @@ An exception from `fun` propagates without writing.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`
-Expected: PASS (11 tests).
+Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`, then `mix precommit`.
+Expected: PASS (11 tests), and the other checks are clean.
 
 - [ ] **Step 5: Commit**
 
@@ -577,7 +578,7 @@ git commit -m "feat: add async message consumer with pact_erlang parity suite"
   - `PactEx.SyncMessage.will_respond_with(sm, contents, opts \\ []) :: t()` appends to `responses`, with the opt `content_type`.
   - `PactEx.SyncMessage.with_plugin_contents(sm, PluginContents.t()) :: t()` sets the whole request/response definition through the plugin, as pact-go `WithContents` does.
   - `%PactEx.SyncMessage.Generated{request: term(), responses: [term()], transport: %{port: pos_integer(), address: String.t()} | nil}`. `address` is `"<host>:<port>"`, the target a gRPC client connects to, with an IPv6 host in brackets (`"[::1]:50051"`). It is not a URL: a plugin transport has no `http://` scheme.
-  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule), and when there is no `plugin_contents` and a response is `nil` or `""`. Why the responses: each `with_body` on `:response` appends one response (`pactffi_with_body`, `handles.rs:1952`), so a `nil` response, which plans to no body and no call, would be dropped without a word and `fun` would get one response fewer. A `""` response becomes an empty body that no provider can be checked against.
+  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule), and when there is no `plugin_contents` and a response is `nil` or `""`. Why the responses: each `with_body` on `:response` appends one response (`pactffi_with_body`, `handles.rs:1952`), so a `nil` response, which plans to no body and no call, would be dropped without a word and `fun` would get one response fewer. A `""` response becomes an empty body that no provider can be checked against.
   - `PactEx.SyncMessage.run!(...) :: :ok`
 
 - [ ] **Step 1: Write the failing tests**
@@ -663,12 +664,12 @@ First check `pact.spec == :v4`. When `plugin_contents` is not set, check that th
 - `interaction_contents(i, :request, ct, json)` with the planned JSON when `plugin_contents` is set, or
 - the request contents and each response planned with `Apply.plan_body/4` (entry point `"PactEx.SyncMessage.run/4"`) and applied on `:request` and `:response`. The runner handles `plugin_contents` itself, so `plan_body/4` never sees a `%PluginContents{}`.
 
-Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write with `pact_handle_write_file`, and `Plugin.cleanup` in `after`. The transport path comes in Task 5. Until then, if `transport` is set, raise `ArgumentError, "transport support lands in Task 5"`. Task 5 removes that line.
+Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write with `pact_handle_write_file`, and `Plugin.cleanup` in `after`. The transport path comes in Task 5. Until then, if `transport` is set, raise `ArgumentError, "transport support lands in Task 5"`. Task 5 removes that line. The runner function that `SyncMessage.run/4` calls is public, so Credo Specs requires a `@spec` on it too. Give it the same narrow return type as `run/4`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mix test test/pact_ex/sync_message_test.exs`
-Expected: PASS (5 tests).
+Run: `mix test test/pact_ex/sync_message_test.exs`, then `mix precommit`.
+Expected: PASS (5 tests), and the other checks are clean.
 
 - [ ] **Step 5: Commit**
 
@@ -682,14 +683,15 @@ git commit -m "feat: add synchronous message consumer"
 ### Task 5: gRPC transport via the protobuf plugin
 
 **Files:**
-- Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules)
-- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change), `lib/pact_ex/sync_message/runner.ex`
+- Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules), `test/support/plugin_processes.ex` (the `PluginProcesses` helper)
+- Create, only if Dialyzer warns about macro-generated code in `route_guide.ex` (Step 2): `.dialyzer_ignore.exs`
+- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change; and, in the same Dialyzer case, `ignore_warnings: ".dialyzer_ignore.exs"` in its `dialyzer` config), `lib/pact_ex/sync_message.ex` (the `@spec` of `run/4`), `lib/pact_ex/sync_message/runner.ex`
 - Test: `test/acceptance/grpc_consumer_test.exs`, `test/acceptance/protobuf_http_test.exs`
 
 **Interfaces:**
 - Consumes: Task 4 `SyncMessage.run/4`, the plan 1 NIFs `create_mock_server/5`, `mock_server_matched/1`, `mock_server_mismatches/1`, `write_pact_file/3` and `cleanup_mock_server/1`, and plan 1 `PactEx.MismatchError`. Also `PactEx.MockServer.matched?/1`, `PactEx.MockServer.mismatches/1` and `PactEx.Consumer.verdict/2` (a `@doc false` public function), which `Consumer.run/4` uses to decide.
 - Produces:
-  - `SyncMessage.run/4` with `transport: "grpc"` (or any plugin transport name).
+  - `SyncMessage.run/4` with `transport: "grpc"` (or any plugin transport name). Its spec, and the spec of the runner function it calls, widen to `:ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}`: until now no code path returned a `MismatchError`, and Dialyzer's `:extra_return` may flag a spec that is wider than the code.
   - Test support modules: `Routeguide.Point` (`latitude` int32 = 1, `longitude` int32 = 2), `Routeguide.Feature` (`name` string = 1, `location` `Routeguide.Point` = 2), `Routeguide.RouteGuide.Service` (`name: "routeguide.RouteGuide"`, `rpc :GetFeature, Routeguide.Point, Routeguide.Feature`) and `Routeguide.RouteGuide.Stub`. Plan 3 reuses these for the provider side.
 
 - [ ] **Step 1: Write the failing tests**
@@ -699,6 +701,7 @@ git commit -m "feat: add synchronous message consumer"
 defmodule PactEx.Acceptance.GrpcConsumerTest do
   use ExUnit.Case, async: false
   alias PactEx.{Plugin, SyncMessage}
+  alias Routeguide.RouteGuide.Stub
 
   @moduletag :plugin
   @moduletag :tmp_dir
@@ -720,7 +723,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
   defp call(port, point) do
     {:ok, channel} = GRPC.Stub.connect("127.0.0.1:#{port}")
     try do
-      Routeguide.RouteGuide.Stub.get_feature(channel, point)
+      Stub.get_feature(channel, point)
     after
       GRPC.Stub.disconnect(channel)
     end
@@ -771,8 +774,8 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
     sm = get_feature(%{"request" => %{"latitude" => "matching(number, 1)"}, "response" => %{"name" => "notEmpty('x')"}})
     assert_raise RuntimeError, fn -> SyncMessage.run(pact, sm, fn _ -> raise "boom" end, transport: "grpc") end
     # Cleanup and the freeing of the pact can finish asynchronously, and the
-    # plugin process exits on its own schedule; poll for up to 5 s.
-    assert Enum.any?(1..50, fn _ -> Process.sleep(100); System.cmd("pgrep", ["-f", "pact-protobuf-plugin"]) |> elem(1) == 1 end)
+    # plugin process exits on its own schedule. `gone?/0` polls for up to 5 s.
+    assert PluginProcesses.gone?()
   end
 end
 ```
@@ -819,8 +822,40 @@ defmodule PactEx.Acceptance.ProtobufHttpTest do
 
     assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}} = Consumer.start_mock_server(pact, [i])
     # Without the explicit cleanup the protobuf plugin would run until the
-    # test process happens to garbage-collect the pact. Poll for up to 5 s.
-    assert Enum.any?(1..50, fn _ -> Process.sleep(100); System.cmd("pgrep", ["-f", "pact-protobuf-plugin"]) |> elem(1) == 1 end)
+    # test process happens to garbage-collect the pact. `gone?/0` polls for up to 5 s.
+    assert PluginProcesses.gone?()
+  end
+end
+```
+
+Both process checks use one helper:
+
+```elixir
+# test/support/plugin_processes.ex
+defmodule PluginProcesses do
+  @moduledoc """
+  Checks that no protobuf plugin process is left running. Test support only.
+  """
+
+  @attempts 50
+  @interval_ms 100
+
+  @doc """
+  Polls for up to 5 s. Returns `true` as soon as no `pact-protobuf-plugin` process runs,
+  and `false` if one still runs after that.
+  """
+  @spec gone?() :: boolean()
+  def gone? do
+    Enum.any?(1..@attempts, fn _ ->
+      Process.sleep(@interval_ms)
+      no_process?()
+    end)
+  end
+
+  # `pgrep` exits with 1 when nothing matches.
+  defp no_process? do
+    {_output, status} = System.cmd("pgrep", ["-f", "pact-protobuf-plugin"])
+    status == 1
   end
 end
 ```
@@ -844,7 +879,12 @@ end
 
 - [ ] **Step 2: Add the test deps and write `test/support/route_guide.ex`**
 
-Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile.
+Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Give each of the four modules in the file (`Routeguide.Point`, `Routeguide.Feature`, `Routeguide.RouteGuide.Service` and `Routeguide.RouteGuide.Stub`) a `@moduledoc`: Credo checks the `.ex` files under `test/`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile. Also write `test/support/plugin_processes.ex` from Step 1, which both process checks call.
+
+Then run `MIX_ENV=test mix compile --warnings-as-errors` and `MIX_ENV=test mix dialyzer`. Both need the test env: `test/support` and the grpc and protobuf deps exist only there, so Dialyzer in the dev env would never see `route_guide.ex`. Nobody has run them on the code that `use Protobuf` and `use GRPC.Stub` generate, so do not assume they pass. If they warn:
+- A warning from handwritten code: fix it.
+- A Dialyzer warning that comes only from macro-generated code in `route_guide.ex`: add `.dialyzer_ignore.exs` with an entry scoped to that file, and set `ignore_warnings: ".dialyzer_ignore.exs"` in the `dialyzer` config of `mix.exs`.
+- A compile warning from generated code: stop and report it.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -860,12 +900,12 @@ When `transport` is set:
 4. Decide with `PactEx.Consumer.verdict(matched?, mismatches)`, the same function `Consumer.run/4` uses. On `:match`, `write_pact_file(p, pact_dir, false)`. On `{:error, error}`, return it. A failed plugin RPC therefore gives `%PactEx.Error{code: -102}` and not a `MismatchError` with an empty list. `verdict/2` hard-codes `function: "PactEx.Consumer.run/4"` on that error, so `SyncMessage.run/4` replaces `function` with `"PactEx.SyncMessage.run/4"` before it returns a `%PactEx.Error{}` from `verdict/2`.
 5. In one `after`: `cleanup_mock_server(p)`, then `Plugin.cleanup(pact_ref)`.
 
-The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove the Task 4 `ArgumentError` line.
+The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove the Task 4 `ArgumentError` line. Widen the `@spec` of `SyncMessage.run/4` (in `lib/pact_ex/sync_message.ex`) and of the runner function it calls to include `PactEx.MismatchError.t()`: the transport branch now returns it. Widening only one of them fails Dialyzer in Step 5, with `:extra_return` on `run/4` or `:missing_return` on the runner.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`
-Expected: PASS (4 + 2 tests).
+Run: `mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`, then `mix precommit`.
+Expected: PASS (4 + 2 tests), and the other checks are clean.
 
 - [ ] **Step 6: Commit**
 
@@ -923,8 +963,8 @@ end
 
 - [ ] **Step 2: Run it**
 
-Run: `mix test test/acceptance/protobuf_message_test.exs`
-Expected: PASS. If it fails because `contents` is a base64 string, fix the envelope decoding in `Message.Reified` (Task 3, Step 3 rule) and re-run.
+Run: `mix test test/acceptance/protobuf_message_test.exs`, then `mix precommit`.
+Expected: PASS, and the other checks are clean. If it fails because `contents` is a base64 string, fix the envelope decoding in `Message.Reified` (Task 3, Step 3 rule) and re-run.
 
 - [ ] **Step 3: Commit**
 
@@ -978,11 +1018,11 @@ Update the parity table rows for plan 2.
 
 - [ ] **Step 3: Bump the version**
 
-Set `@version "0.2.0"` in `mix.exs` and add a `0.2.0` section to `CHANGELOG.md`: async messages, sync messages, Pact plugins and the gRPC transport. This is step 1 of `RELEASING.md`. Why a new version: users download a precompiled NIF that matches the package version. The 0.1.0 files do not contain the new NIFs (`using_plugin`, `message_reify` and the others from Task 1), so 0.2.0 needs its own 12 build artifacts and its own checksums. CI builds from source (`PACT_EX_BUILD`), so it does not need those files yet.
+Set `@version "0.2.0"` in `mix.exs` and in `CHANGELOG.md` rename `## Unreleased` (the fixes made after 0.1.0) to `## 0.2.0 - <release date>`. Add the plan 2 entries to it: async messages, sync messages, Pact plugins and the gRPC transport. This is step 1 of `RELEASING.md`. Why a new version: users download a precompiled NIF that matches the package version. The 0.1.0 files do not contain the new NIFs (`using_plugin`, `message_reify` and the others from Task 1), so 0.2.0 needs its own 12 build artifacts and its own checksums. CI builds from source (`PACT_EX_BUILD`), so it does not need those files yet.
 
 - [ ] **Step 4: Verify**
 
-Run: `mix test && mix format --check-formatted && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy -- -D warnings)`
+Run: `mix precommit && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)`
 Expected: all green, with plugin tests included when the plugin is installed.
 
 - [ ] **Step 5: Commit**
