@@ -6,6 +6,19 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 - [ ] Re-review plan 3 against the plan 1 code.
 
+## Plan 2: third review
+
+Plan 2 was written before PR #4 added Credo (strict), Dialyzer and `mix precommit`. These fixes make it pass those checks.
+
+- [ ] Run the checks in every task. Add a Global Constraint: the code passes `mix precommit`. That covers compile with warnings as errors, format, Credo strict (Specs, StrictModuleLayout, ModuleDoc) and Dialyzer. End each task's "verify they pass" step with `mix precommit`. A task that touches `native/` also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`. Task 7 Step 4 uses the same commands. Its clippy call lacks `--all-targets`, which CI uses.
+- [ ] Credo AliasUsage in the test snippets. `plugin_test.exs` (Task 2) calls `PactEx.Consumer.Apply.validate/1`, and the gRPC test (Task 5) calls `Routeguide.RouteGuide.Stub.get_feature/2`. Alias both.
+- [ ] Task 5 polls `pgrep` twice, with a `;` (Credo Semicolons). Move the poll to one helper in `test/support`, with `@moduledoc` and `@spec`, and use it in both tests.
+- [ ] Task 5 Step 2: the four `Routeguide.*` modules in `test/support/route_guide.ex` need `@moduledoc`. Credo checks `.ex` files under `test/`.
+- [ ] Task 5 Step 2: nobody has run `--warnings-as-errors` or Dialyzer on the code that `use Protobuf` and `use GRPC.Stub` generate. Add a check right after writing `route_guide.ex`: `MIX_ENV=test mix compile --warnings-as-errors` and `mix dialyzer`. Say what to do if they warn.
+- [ ] Task 4 specs `SyncMessage.run/4` with `PactEx.MismatchError.t()`, which it cannot return until Task 5. Dialyzer's `:extra_return` may flag it. Spec it without `MismatchError` in Task 4 and widen the spec in Task 5.
+- [ ] The "Status: Written before plan 1 was implemented" header is stale. Plan 2 was reviewed three times against the plan 1 code.
+- [ ] Task 7 Step 3 adds a `0.2.0` section to `CHANGELOG.md`, but an `## Unreleased` section already exists. Turn it into `0.2.0` and add the plan 2 entries.
+
 ## Minor: code
 
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
