@@ -22,6 +22,18 @@ pub struct PactResource {
 }
 
 impl PactResource {
+    pub fn new(handle: PactHandle) -> Self {
+        PactResource {
+            handle,
+            plugins_cleaned: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the plugins of this pact have been cleaned up.
+    pub fn plugins_cleaned(&self) -> bool {
+        self.plugins_cleaned.load(Ordering::Acquire)
+    }
+
     /// Claims the plugin cleanup of this pact. Returns true to the first call
     /// only.
     ///
@@ -37,9 +49,6 @@ impl PactResource {
 
     /// Cleans up the plugins of this pact, on the first call only. Returns
     /// whether this call did the cleanup.
-    // Nothing calls this until the `cleanup_plugins` NIF of plan 2. `Drop` goes
-    // through `claim_plugin_cleanup` and cleans up on the reaper thread.
-    #[allow(dead_code)]
     pub fn cleanup_plugins_once(&self) -> bool {
         let claimed = self.claim_plugin_cleanup();
         if claimed {
@@ -141,10 +150,7 @@ fn new_pact(consumer: String, provider: String) -> NifResult<ResourceArc<PactRes
     let consumer = arg_cstring(&consumer)?;
     let provider = arg_cstring(&provider)?;
     let handle = pactffi_new_pact(consumer.as_ptr(), provider.as_ptr());
-    Ok(ResourceArc::new(PactResource {
-        handle,
-        plugins_cleaned: AtomicBool::new(false),
-    }))
+    Ok(ResourceArc::new(PactResource::new(handle)))
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
@@ -245,10 +251,7 @@ mod tests {
             handle,
             pact_models::PactSpecification::V4
         ));
-        PactResource {
-            handle,
-            plugins_cleaned: AtomicBool::new(false),
-        }
+        PactResource::new(handle)
     }
 
     /// Pids of running protobuf plugin processes, found with `pgrep`.
@@ -304,6 +307,14 @@ mod tests {
         assert!(pact.cleanup_plugins_once());
         assert!(!pact.cleanup_plugins_once());
         assert!(!pact.cleanup_plugins_once());
+    }
+
+    #[test]
+    fn plugins_cleaned_turns_true_after_the_cleanup() {
+        let pact = v4_pact("consumer", "provider");
+        assert!(!pact.plugins_cleaned());
+        assert!(pact.cleanup_plugins_once());
+        assert!(pact.plugins_cleaned());
     }
 
     // Needs the protobuf plugin 0.8.1 in ~/.pact/plugins, which CI does not have.
