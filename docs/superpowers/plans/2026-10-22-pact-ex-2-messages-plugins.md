@@ -684,7 +684,8 @@ git commit -m "feat: add synchronous message consumer"
 
 **Files:**
 - Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules), `test/support/plugin_processes.ex` (the `PluginProcesses` helper)
-- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change), `lib/pact_ex/sync_message/runner.ex`
+- Create, only if Dialyzer warns about macro-generated code in `route_guide.ex` (Step 2): `.dialyzer_ignore.exs`
+- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change; and, in the same Dialyzer case, `ignore_warnings: ".dialyzer_ignore.exs"` in its `dialyzer` config), `lib/pact_ex/sync_message/runner.ex`
 - Test: `test/acceptance/grpc_consumer_test.exs`, `test/acceptance/protobuf_http_test.exs`
 
 **Interfaces:**
@@ -879,6 +880,11 @@ end
 - [ ] **Step 2: Add the test deps and write `test/support/route_guide.ex`**
 
 Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Give each of the four modules in the file (`Routeguide.Point`, `Routeguide.Feature`, `Routeguide.RouteGuide.Service` and `Routeguide.RouteGuide.Stub`) a `@moduledoc`: Credo checks the `.ex` files under `test/`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile. Also write `test/support/plugin_processes.ex` from Step 1, which both process checks call.
+
+Then run `MIX_ENV=test mix compile --warnings-as-errors` and `MIX_ENV=test mix dialyzer`. Both need the test env: `test/support` and the grpc and protobuf deps exist only there, so Dialyzer in the dev env would never see `route_guide.ex`. Nobody has run them on the code that `use Protobuf` and `use GRPC.Stub` generate, so do not assume they pass. If they warn:
+- A warning from handwritten code: fix it.
+- A Dialyzer warning that comes only from macro-generated code in `route_guide.ex`: add `.dialyzer_ignore.exs` with an entry scoped to that file, and set `ignore_warnings: ".dialyzer_ignore.exs"` in the `dialyzer` config of `mix.exs`.
+- A compile warning from generated code: stop and report it.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
