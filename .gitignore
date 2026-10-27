@@ -29,5 +29,8 @@ pact_ex-*.tar
 # Compiled NIF copied by Rustler.
 /priv/native/
 
+# Dialyzer PLTs.
+/priv/plts/
+
 # Pact files written by tests and examples.
 /pacts/

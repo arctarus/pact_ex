@@ -162,6 +162,7 @@ defmodule PactEx.HTTP do
   def header_name(name) when is_atom(name),
     do: name |> Atom.to_string() |> String.replace("_", "-") |> String.downcase(:ascii)
 
+  @spec invalid_params!(atom(), term()) :: no_return()
   defp invalid_params!(key, value) do
     raise ArgumentError,
           "option #{inspect(key)} must be a map or a list of {name, value} tuples " <>

@@ -1,6 +1,4 @@
 defmodule PactEx.AbortMatrixTest do
-  use ExUnit.Case, async: false
-
   @moduledoc """
   No input may abort the VM.
 
@@ -10,6 +8,8 @@ defmodule PactEx.AbortMatrixTest do
   outcome the case expects: the server started and answered, or `PactEx`
   returned a `-101` error.
   """
+
+  use ExUnit.Case, async: false
 
   alias PactEx.AbortCases
 

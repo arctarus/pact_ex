@@ -300,6 +300,17 @@ mix deps.get
 mix test
 ```
 
+CI also runs Credo and Dialyzer. `mix precommit` runs the Elixir checks of CI
+in one go: compile with warnings as errors, the formatter check, Credo,
+Dialyzer and the tests. To run it before every push, enable the hook in
+`.githooks` once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+`git push --no-verify` skips it for one push.
+
 ## Supported platforms
 
 Precompiled NIFs exist for NIF versions 2.16 (OTP 25) and 2.17 (OTP 26, 27 and

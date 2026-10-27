@@ -16,6 +16,13 @@ defmodule PactEx.AbortCases do
 
   alias PactEx.HTTP
 
+  @typedoc "One case: `expect` is `:ok` or `:invalid`, `build` makes the interaction."
+  @type kase :: %{
+          name: String.t(),
+          expect: :ok | :invalid,
+          build: (-> PactEx.HTTP.Interaction.t())
+        }
+
   @xml "application/xml"
   @form "application/x-www-form-urlencoded"
   @bad_description %{"root" => %{"a" => "b"}}
@@ -29,10 +36,12 @@ defmodule PactEx.AbortCases do
   # -- Cases ---------------------------------------------------------------
 
   @doc "Every case: fixed reviewer probes first, then the generated matrices."
+  @spec all() :: [kase()]
   def all,
     do: fixed() ++ type_matrix() ++ body_matrix() ++ form_matrix() ++ empty_content_type()
 
   @doc "The groups the test runs, as `{group, cases}`."
+  @spec groups() :: [{String.t(), [kase()]}]
   def groups do
     [
       {"fixed", fixed()},
@@ -461,6 +470,8 @@ defmodule PactEx.AbortCases do
   end
 
   defp colliding, do: %{:root => %{"name" => "ok"}, "root" => %{"a" => "b"}}
+  # An improper list is the input under test, so Dialyzer's warning is expected.
+  @dialyzer {:nowarn_function, improper: 0}
   defp improper, do: Function.identity([1 | 2])
 
   # -- Running one case in this process ----------------------------------------
@@ -471,6 +482,7 @@ defmodule PactEx.AbortCases do
     * `:ok` - the mock server started and answered a request;
     * `{:error, code}` - `PactEx` returned a `PactEx.Error` with that code.
   """
+  @spec run(String.t()) :: :ok
   def run(name) do
     {:ok, _} = Application.ensure_all_started(:req)
     kase = Enum.find(all(), &(&1.name == name)) || raise "no abort case named #{inspect(name)}"
@@ -480,7 +492,7 @@ defmodule PactEx.AbortCases do
       case PactEx.Consumer.start_mock_server(pact, [kase.build.()]) do
         {:ok, mock} ->
           try do
-            _ = Req.request(mock.url <> "/x", decode_body: false, retry: false)
+            _ = Req.request(url: mock.url <> "/x", decode_body: false, retry: false)
             :ok
           after
             PactEx.MockServer.stop(mock)
