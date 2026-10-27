@@ -878,7 +878,7 @@ end
 
 - [ ] **Step 2: Add the test deps and write `test/support/route_guide.ex`**
 
-Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile. Also write `test/support/plugin_processes.ex` from Step 1, which both process checks call.
+Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Give each of the four modules in the file (`Routeguide.Point`, `Routeguide.Feature`, `Routeguide.RouteGuide.Service` and `Routeguide.RouteGuide.Stub`) a `@moduledoc`: Credo checks the `.ex` files under `test/`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile. Also write `test/support/plugin_processes.ex` from Step 1, which both process checks call.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
