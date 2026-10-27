@@ -1018,7 +1018,7 @@ Update the parity table rows for plan 2.
 
 - [ ] **Step 3: Bump the version**
 
-Set `@version "0.2.0"` in `mix.exs` and add a `0.2.0` section to `CHANGELOG.md`: async messages, sync messages, Pact plugins and the gRPC transport. This is step 1 of `RELEASING.md`. Why a new version: users download a precompiled NIF that matches the package version. The 0.1.0 files do not contain the new NIFs (`using_plugin`, `message_reify` and the others from Task 1), so 0.2.0 needs its own 12 build artifacts and its own checksums. CI builds from source (`PACT_EX_BUILD`), so it does not need those files yet.
+Set `@version "0.2.0"` in `mix.exs` and in `CHANGELOG.md` rename `## Unreleased` (the fixes made after 0.1.0) to `## 0.2.0 - <release date>`. Add the plan 2 entries to it: async messages, sync messages, Pact plugins and the gRPC transport. This is step 1 of `RELEASING.md`. Why a new version: users download a precompiled NIF that matches the package version. The 0.1.0 files do not contain the new NIFs (`using_plugin`, `message_reify` and the others from Task 1), so 0.2.0 needs its own 12 build artifacts and its own checksums. CI builds from source (`PACT_EX_BUILD`), so it does not need those files yet.
 
 - [ ] **Step 4: Verify**
 
