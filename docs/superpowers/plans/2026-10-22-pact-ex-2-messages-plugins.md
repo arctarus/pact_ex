@@ -578,7 +578,7 @@ git commit -m "feat: add async message consumer with pact_erlang parity suite"
   - `PactEx.SyncMessage.will_respond_with(sm, contents, opts \\ []) :: t()` appends to `responses`, with the opt `content_type`.
   - `PactEx.SyncMessage.with_plugin_contents(sm, PluginContents.t()) :: t()` sets the whole request/response definition through the plugin, as pact-go `WithContents` does.
   - `%PactEx.SyncMessage.Generated{request: term(), responses: [term()], transport: %{port: pos_integer(), address: String.t()} | nil}`. `address` is `"<host>:<port>"`, the target a gRPC client connects to, with an IPv6 host in brackets (`"[::1]:50051"`). It is not a URL: a plugin transport has no `http://` scheme.
-  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule), and when there is no `plugin_contents` and a response is `nil` or `""`. Why the responses: each `with_body` on `:response` appends one response (`pactffi_with_body`, `handles.rs:1952`), so a `nil` response, which plans to no body and no call, would be dropped without a word and `fun` would get one response fewer. A `""` response becomes an empty body that no provider can be checked against.
+  - `PactEx.SyncMessage.run(Pact.t(), t(), (Generated.t() -> any()), opts \\ []) :: :ok | {:error, PactEx.Error.t()}` with the opts `transport` (default `nil`), `host` (default `"127.0.0.1"`), `port` (default `0`) and `transport_config` (map, default `nil`). It returns a `-101` `%PactEx.Error{function: "PactEx.SyncMessage.run/4"}`, before any native call, when `pact.spec` is not `:v4`, when there is no `plugin_contents` and the request is `nil` or `""` (same reason as for `Message.run/4`), when `plugin_contents` is set and `pact.plugins == []` (the Task 2 rule), and when there is no `plugin_contents` and a response is `nil` or `""`. Why the responses: each `with_body` on `:response` appends one response (`pactffi_with_body`, `handles.rs:1952`), so a `nil` response, which plans to no body and no call, would be dropped without a word and `fun` would get one response fewer. A `""` response becomes an empty body that no provider can be checked against.
   - `PactEx.SyncMessage.run!(...) :: :ok`
 
 - [ ] **Step 1: Write the failing tests**
@@ -664,7 +664,7 @@ First check `pact.spec == :v4`. When `plugin_contents` is not set, check that th
 - `interaction_contents(i, :request, ct, json)` with the planned JSON when `plugin_contents` is set, or
 - the request contents and each response planned with `Apply.plan_body/4` (entry point `"PactEx.SyncMessage.run/4"`) and applied on `:request` and `:response`. The runner handles `plugin_contents` itself, so `plan_body/4` never sees a `%PluginContents{}`.
 
-Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write with `pact_handle_write_file`, and `Plugin.cleanup` in `after`. The transport path comes in Task 5. Until then, if `transport` is set, raise `ArgumentError, "transport support lands in Task 5"`. Task 5 removes that line.
+Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write with `pact_handle_write_file`, and `Plugin.cleanup` in `after`. The transport path comes in Task 5. Until then, if `transport` is set, raise `ArgumentError, "transport support lands in Task 5"`. Task 5 removes that line. The runner function that `SyncMessage.run/4` calls is public, so Credo Specs requires a `@spec` on it too. Give it the same narrow return type as `run/4`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -685,13 +685,13 @@ git commit -m "feat: add synchronous message consumer"
 **Files:**
 - Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules), `test/support/plugin_processes.ex` (the `PluginProcesses` helper)
 - Create, only if Dialyzer warns about macro-generated code in `route_guide.ex` (Step 2): `.dialyzer_ignore.exs`
-- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change; and, in the same Dialyzer case, `ignore_warnings: ".dialyzer_ignore.exs"` in its `dialyzer` config), `lib/pact_ex/sync_message/runner.ex`
+- Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change; and, in the same Dialyzer case, `ignore_warnings: ".dialyzer_ignore.exs"` in its `dialyzer` config), `lib/pact_ex/sync_message.ex` (the `@spec` of `run/4`), `lib/pact_ex/sync_message/runner.ex`
 - Test: `test/acceptance/grpc_consumer_test.exs`, `test/acceptance/protobuf_http_test.exs`
 
 **Interfaces:**
 - Consumes: Task 4 `SyncMessage.run/4`, the plan 1 NIFs `create_mock_server/5`, `mock_server_matched/1`, `mock_server_mismatches/1`, `write_pact_file/3` and `cleanup_mock_server/1`, and plan 1 `PactEx.MismatchError`. Also `PactEx.MockServer.matched?/1`, `PactEx.MockServer.mismatches/1` and `PactEx.Consumer.verdict/2` (a `@doc false` public function), which `Consumer.run/4` uses to decide.
 - Produces:
-  - `SyncMessage.run/4` with `transport: "grpc"` (or any plugin transport name).
+  - `SyncMessage.run/4` with `transport: "grpc"` (or any plugin transport name). Its spec, and the spec of the runner function it calls, widen to `:ok | {:error, PactEx.Error.t() | PactEx.MismatchError.t()}`: until now no code path returned a `MismatchError`, and Dialyzer's `:extra_return` may flag a spec that is wider than the code.
   - Test support modules: `Routeguide.Point` (`latitude` int32 = 1, `longitude` int32 = 2), `Routeguide.Feature` (`name` string = 1, `location` `Routeguide.Point` = 2), `Routeguide.RouteGuide.Service` (`name: "routeguide.RouteGuide"`, `rpc :GetFeature, Routeguide.Point, Routeguide.Feature`) and `Routeguide.RouteGuide.Stub`. Plan 3 reuses these for the provider side.
 
 - [ ] **Step 1: Write the failing tests**
@@ -900,7 +900,7 @@ When `transport` is set:
 4. Decide with `PactEx.Consumer.verdict(matched?, mismatches)`, the same function `Consumer.run/4` uses. On `:match`, `write_pact_file(p, pact_dir, false)`. On `{:error, error}`, return it. A failed plugin RPC therefore gives `%PactEx.Error{code: -102}` and not a `MismatchError` with an empty list. `verdict/2` hard-codes `function: "PactEx.Consumer.run/4"` on that error, so `SyncMessage.run/4` replaces `function` with `"PactEx.SyncMessage.run/4"` before it returns a `%PactEx.Error{}` from `verdict/2`.
 5. In one `after`: `cleanup_mock_server(p)`, then `Plugin.cleanup(pact_ref)`.
 
-The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove the Task 4 `ArgumentError` line.
+The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove the Task 4 `ArgumentError` line. Widen the `@spec` of `SyncMessage.run/4` (in `lib/pact_ex/sync_message.ex`) and of the runner function it calls to include `PactEx.MismatchError.t()`: the transport branch now returns it. Widening only one of them fails Dialyzer in Step 5, with `:extra_return` on `run/4` or `:missing_return` on the runner.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
