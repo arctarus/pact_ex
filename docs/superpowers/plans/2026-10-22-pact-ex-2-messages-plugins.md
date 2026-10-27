@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status:** Written before plan 1 was implemented. Review this plan against the real plan 1 code (module names, NIF signatures, `Outcome`/`FfiError`, the `run/4` shape) before executing it.
+> **Status:** Reviewed three times against the plan 1 code (the last time against `main` at f19ddff). Ready to execute.
 
 **Goal:** Add async messages (pact_erlang parity), sync messages, and the Pact plugin system to `pact_ex`. That covers loading plugins, plugin-driven contents and plugin transports, with the protobuf plugin's gRPC transport as the acceptance case.
 

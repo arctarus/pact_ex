@@ -10,7 +10,6 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 Plan 2 was written before PR #4 added Credo (strict), Dialyzer and `mix precommit`. These fixes make it pass those checks.
 
-- [ ] The "Status: Written before plan 1 was implemented" header is stale. Plan 2 was reviewed three times against the plan 1 code.
 - [ ] Task 7 Step 3 adds a `0.2.0` section to `CHANGELOG.md`, but an `## Unreleased` section already exists. Turn it into `0.2.0` and add the plan 2 entries.
 
 ## Minor: code
