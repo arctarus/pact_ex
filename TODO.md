@@ -10,7 +10,6 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 Plan 2 was written before PR #4 added Credo (strict), Dialyzer and `mix precommit`. These fixes make it pass those checks.
 
-- [ ] Credo AliasUsage in the test snippets. `plugin_test.exs` (Task 2) calls `PactEx.Consumer.Apply.validate/1`, and the gRPC test (Task 5) calls `Routeguide.RouteGuide.Stub.get_feature/2`. Alias both.
 - [ ] Task 5 polls `pgrep` twice, with a `;` (Credo Semicolons). Move the poll to one helper in `test/support`, with `@moduledoc` and `@spec`, and use it in both tests.
 - [ ] Task 5 Step 2: the four `Routeguide.*` modules in `test/support/route_guide.ex` need `@moduledoc`. Credo checks `.ex` files under `test/`.
 - [ ] Task 5 Step 2: nobody has run `--warnings-as-errors` or Dialyzer on the code that `use Protobuf` and `use GRPC.Stub` generate. Add a check right after writing `route_guide.ex`: `MIX_ENV=test mix compile --warnings-as-errors` and `mix dialyzer`. Say what to do if they warn.

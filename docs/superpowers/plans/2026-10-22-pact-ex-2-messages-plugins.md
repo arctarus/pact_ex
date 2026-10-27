@@ -269,7 +269,7 @@ Copy `route_guide.proto` from pact-go `examples/grpc/routeguide/route_guide.prot
 # test/pact_ex/plugin_test.exs
 defmodule PactEx.PluginTest do
   use ExUnit.Case, async: false
-  alias PactEx.{Consumer, HTTP, Plugin}
+  alias PactEx.{Consumer, Consumer.Apply, HTTP, Plugin}
 
   test "using_plugin/3 accumulates plugins in order" do
     pact = PactEx.new("c", "p") |> PactEx.using_plugin("protobuf", "0.8.1") |> PactEx.using_plugin("csv")
@@ -310,7 +310,7 @@ defmodule PactEx.PluginTest do
     body = Plugin.contents("application/protobuf", %{"a" => 1})
     i = HTTP.interaction("x") |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200, body: body, content_type: "application/protobuf")
 
-    assert :ok = PactEx.Consumer.Apply.validate(i)
+    assert :ok = Apply.validate(i)
   end
 
   test "plugin contents in a pact without plugins are rejected before any native call" do
@@ -700,6 +700,7 @@ git commit -m "feat: add synchronous message consumer"
 defmodule PactEx.Acceptance.GrpcConsumerTest do
   use ExUnit.Case, async: false
   alias PactEx.{Plugin, SyncMessage}
+  alias Routeguide.RouteGuide.Stub
 
   @moduletag :plugin
   @moduletag :tmp_dir
@@ -721,7 +722,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
   defp call(port, point) do
     {:ok, channel} = GRPC.Stub.connect("127.0.0.1:#{port}")
     try do
-      Routeguide.RouteGuide.Stub.get_feature(channel, point)
+      Stub.get_feature(channel, point)
     after
       GRPC.Stub.disconnect(channel)
     end
