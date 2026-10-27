@@ -683,7 +683,7 @@ git commit -m "feat: add synchronous message consumer"
 ### Task 5: gRPC transport via the protobuf plugin
 
 **Files:**
-- Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules)
+- Create: `test/support/route_guide.ex` (handwritten `Protobuf` and `GRPC` modules), `test/support/plugin_processes.ex` (the `PluginProcesses` helper)
 - Modify: `mix.exs` (test deps `{:grpc, "~> 1.0", only: :test}`, `{:protobuf, "~> 0.17", only: :test}` and `{:gun, "~> 2.4", only: :test}`; no `test_helper.exs` change), `lib/pact_ex/sync_message/runner.ex`
 - Test: `test/acceptance/grpc_consumer_test.exs`, `test/acceptance/protobuf_http_test.exs`
 
@@ -773,8 +773,8 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
     sm = get_feature(%{"request" => %{"latitude" => "matching(number, 1)"}, "response" => %{"name" => "notEmpty('x')"}})
     assert_raise RuntimeError, fn -> SyncMessage.run(pact, sm, fn _ -> raise "boom" end, transport: "grpc") end
     # Cleanup and the freeing of the pact can finish asynchronously, and the
-    # plugin process exits on its own schedule; poll for up to 5 s.
-    assert Enum.any?(1..50, fn _ -> Process.sleep(100); System.cmd("pgrep", ["-f", "pact-protobuf-plugin"]) |> elem(1) == 1 end)
+    # plugin process exits on its own schedule. `gone?/0` polls for up to 5 s.
+    assert PluginProcesses.gone?()
   end
 end
 ```
@@ -821,8 +821,40 @@ defmodule PactEx.Acceptance.ProtobufHttpTest do
 
     assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2}} = Consumer.start_mock_server(pact, [i])
     # Without the explicit cleanup the protobuf plugin would run until the
-    # test process happens to garbage-collect the pact. Poll for up to 5 s.
-    assert Enum.any?(1..50, fn _ -> Process.sleep(100); System.cmd("pgrep", ["-f", "pact-protobuf-plugin"]) |> elem(1) == 1 end)
+    # test process happens to garbage-collect the pact. `gone?/0` polls for up to 5 s.
+    assert PluginProcesses.gone?()
+  end
+end
+```
+
+Both process checks use one helper:
+
+```elixir
+# test/support/plugin_processes.ex
+defmodule PluginProcesses do
+  @moduledoc """
+  Checks that no protobuf plugin process is left running. Test support only.
+  """
+
+  @attempts 50
+  @interval_ms 100
+
+  @doc """
+  Polls for up to 5 s. Returns `true` as soon as no `pact-protobuf-plugin` process runs,
+  and `false` if one still runs after that.
+  """
+  @spec gone?() :: boolean()
+  def gone? do
+    Enum.any?(1..@attempts, fn _ ->
+      Process.sleep(@interval_ms)
+      no_process?()
+    end)
+  end
+
+  # `pgrep` exits with 1 when nothing matches.
+  defp no_process? do
+    {_output, status} = System.cmd("pgrep", ["-f", "pact-protobuf-plugin"])
+    status == 1
   end
 end
 ```
@@ -846,7 +878,7 @@ end
 
 - [ ] **Step 2: Add the test deps and write `test/support/route_guide.ex`**
 
-Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile.
+Add the three test deps to `mix.exs` and run `mix deps.get`. Then write `test/support/route_guide.ex` with `use Protobuf, syntax: :proto3` and `field` for the messages, `use GRPC.Service, name: "routeguide.RouteGuide"` and `use GRPC.Stub, service: Routeguide.RouteGuide.Service`, with the fields and RPC listed in Interfaces. Package `routeguide`. Do this before the first run: the tests match on `%Routeguide.Feature{}`, so without these modules the test files do not compile. Also write `test/support/plugin_processes.ex` from Step 1, which both process checks call.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
