@@ -17,6 +17,7 @@
 ## Global Constraints
 
 - Every plan 1 Global Constraint applies, including the test-coverage rule: unit tests for every new function or NIF and its error paths, plus end-to-end tests. Here end-to-end means a real `Message.run` or `SyncMessage.run`, a real gRPC client against the plugin mock server, and assertions on the written pact.
+- Every task leaves the code passing `mix precommit`. It runs `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict` and `dialyzer`, then `mix test`. Credo's Specs and ModuleDoc checks apply: every new public function in `lib/` needs a `@spec` and every new module a `@moduledoc`. The snippets in this plan are not wrapped to the formatter's line length, so run `mix format` before `mix precommit`. A task that changes `native/` also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` in `native/pact_ex_nif`, the same as CI.
 - Protobuf plugin version `0.8.1`. Install it under `${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-0.8.1` with `scripts/install-protobuf-plugin.sh`.
 - A plugin that is not on disk is installed automatically. pact-plugin-driver does not stop at "not found": it fetches the pact-plugins index from GitHub and installs the plugin if the index lists it. We keep this behaviour and do not add an `installed?` check before loading. Consequences, documented in the README (Task 7):
   - A test run that needs a missing plugin needs network access.
@@ -212,8 +213,8 @@ Expected: FAIL with `PactEx.Native.new_message_interaction/2 is undefined or pri
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/plugins_test.exs test/pact_ex/native/scheduler_test.exs`
-Expected: PASS (3 + 2 + 2 tests). The plugin tests run without any plugin installed. The first one still reaches for the plugin index (see the auto-install constraint).
+Run: `mix test test/pact_ex/native/messages_test.exs test/pact_ex/native/plugins_test.exs test/pact_ex/native/scheduler_test.exs`, then `mix precommit`, then, in `native/pact_ex_nif`, `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+Expected: PASS (3 + 2 + 2 tests), and the other checks are clean. The plugin tests run without any plugin installed. The first one still reaches for the plugin index (see the auto-install constraint).
 
 - [ ] **Step 6: Commit**
 
@@ -335,8 +336,8 @@ Expected: FAIL. The test file does not compile: it matches on `%PactEx.PluginCon
 
 - [ ] **Step 5: Run tests to verify they pass, and that plan 1 still passes**
 
-Run: `mix test`
-Expected: PASS. `plugin_test.exs` has 7 tests, and none of them needs an installed plugin.
+Run: `mix test`, then `mix precommit`.
+Expected: PASS, and the other checks are clean. `plugin_test.exs` has 7 tests, and none of them needs an installed plugin.
 
 - [ ] **Step 6: Commit**
 
@@ -549,8 +550,8 @@ An exception from `fun` propagates without writing.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`
-Expected: PASS (11 tests).
+Run: `mix test test/pact_ex/message_test.exs test/acceptance/message_end_to_end_test.exs`, then `mix precommit`.
+Expected: PASS (11 tests), and the other checks are clean.
 
 - [ ] **Step 5: Commit**
 
@@ -667,8 +668,8 @@ Then `sync_message_generate_contents`, decode both envelopes, call `fun`, write 
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mix test test/pact_ex/sync_message_test.exs`
-Expected: PASS (5 tests).
+Run: `mix test test/pact_ex/sync_message_test.exs`, then `mix precommit`.
+Expected: PASS (5 tests), and the other checks are clean.
 
 - [ ] **Step 5: Commit**
 
@@ -864,8 +865,8 @@ The order is the same as plan 1 `run/4`: read mismatches before cleanup. Remove 
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`
-Expected: PASS (4 + 2 tests).
+Run: `mix test test/acceptance/grpc_consumer_test.exs test/acceptance/protobuf_http_test.exs`, then `mix precommit`.
+Expected: PASS (4 + 2 tests), and the other checks are clean.
 
 - [ ] **Step 6: Commit**
 
@@ -923,8 +924,8 @@ end
 
 - [ ] **Step 2: Run it**
 
-Run: `mix test test/acceptance/protobuf_message_test.exs`
-Expected: PASS. If it fails because `contents` is a base64 string, fix the envelope decoding in `Message.Reified` (Task 3, Step 3 rule) and re-run.
+Run: `mix test test/acceptance/protobuf_message_test.exs`, then `mix precommit`.
+Expected: PASS, and the other checks are clean. If it fails because `contents` is a base64 string, fix the envelope decoding in `Message.Reified` (Task 3, Step 3 rule) and re-run.
 
 - [ ] **Step 3: Commit**
 
@@ -982,7 +983,7 @@ Set `@version "0.2.0"` in `mix.exs` and add a `0.2.0` section to `CHANGELOG.md`:
 
 - [ ] **Step 4: Verify**
 
-Run: `mix test && mix format --check-formatted && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy -- -D warnings)`
+Run: `mix precommit && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)`
 Expected: all green, with plugin tests included when the plugin is installed.
 
 - [ ] **Step 5: Commit**

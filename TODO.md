@@ -10,7 +10,6 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 Plan 2 was written before PR #4 added Credo (strict), Dialyzer and `mix precommit`. These fixes make it pass those checks.
 
-- [ ] Run the checks in every task. Add a Global Constraint: the code passes `mix precommit`. That covers compile with warnings as errors, format, Credo strict (Specs, StrictModuleLayout, ModuleDoc) and Dialyzer. End each task's "verify they pass" step with `mix precommit`. A task that touches `native/` also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`. Task 7 Step 4 uses the same commands. Its clippy call lacks `--all-targets`, which CI uses.
 - [ ] Credo AliasUsage in the test snippets. `plugin_test.exs` (Task 2) calls `PactEx.Consumer.Apply.validate/1`, and the gRPC test (Task 5) calls `Routeguide.RouteGuide.Stub.get_feature/2`. Alias both.
 - [ ] Task 5 polls `pgrep` twice, with a `;` (Credo Semicolons). Move the poll to one helper in `test/support`, with `@moduledoc` and `@spec`, and use it in both tests.
 - [ ] Task 5 Step 2: the four `Routeguide.*` modules in `test/support/route_guide.ex` need `@moduledoc`. Credo checks `.ex` files under `test/`.
