@@ -42,9 +42,15 @@ defmodule PactEx.Consumer.Apply do
   # the same body rules, with the caller's label and entry point in errors.
   # `plan_json/3` does the same for JSON that is not a body (provider state
   # params, message metadata).
+  #
+  # A `PluginContents` body is planned as `{:plugin, content_type, json}`, with
+  # `json` encoded under the same rules as a map body. It is applied last, with
+  # `Native.interaction_contents/4`, after the other headers. Its own content
+  # type wins: an explicit `:content_type` or a Content-Type header that names
+  # another media type is an error.
 
   alias PactEx.Consumer.BodyCheck
-  alias PactEx.{Error, HTTP, Native}
+  alias PactEx.{Error, HTTP, Native, PluginContents}
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -129,6 +135,28 @@ defmodule PactEx.Consumer.Apply do
 
   defp with_entry_point(other, _entry_point), do: other
 
+  @doc false
+  @spec plugin_contents?(Interaction.t()) :: boolean()
+  def plugin_contents?(%Interaction{request: request, response: response}) do
+    match?(%{body: %PluginContents{}}, request) or match?(%{body: %PluginContents{}}, response)
+  end
+
+  @doc false
+  @spec check_plugins_declared(boolean(), [{String.t(), String.t() | nil}], String.t()) ::
+          :ok | {:error, Error.t()}
+  def check_plugins_declared(true, [], entry_point) do
+    {:error,
+     %{
+       invalid(
+         "an interaction has plugin contents (PactEx.Plugin.contents/2), but the pact has " <>
+           "no plugin. Add the plugin that handles it with PactEx.using_plugin/3."
+       )
+       | function: entry_point
+     }}
+  end
+
+  def check_plugins_declared(_plugin_contents?, _plugins, _entry_point), do: :ok
+
   # -- Plan: headers and body of each part, decided before any native call ----
 
   defp plan(%Interaction{description: description} = interaction) do
@@ -150,6 +178,16 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
+  defp plan_part_body(part, description, %{body: %PluginContents{} = body} = struct, headers) do
+    label = "#{part} body of interaction #{inspect(description)}"
+    candidates = [struct.content_type, header_candidate(headers)]
+
+    with :ok <- check_plugin_type(body, candidates, label),
+         {:ok, json, _decoded} <- encode_decoded(body.contents, label) do
+      {:ok, %{headers: headers, body: {:plugin, body.content_type, json}}}
+    end
+  end
+
   defp plan_part_body(part, description, %{body: body} = struct, headers) do
     if supported_body?(body) do
       label = "#{part} body of interaction #{inspect(description)}"
@@ -162,6 +200,34 @@ defmodule PactEx.Consumer.Apply do
       {:error,
        invalid("unsupported #{part} body: #{inspect(body)}, expected a binary, map or list")}
     end
+  end
+
+  # The content type of plugin contents wins. Another explicit type or header
+  # that names a different media type would be ignored without a word, so it is
+  # an error. Parameters (`; charset=...`) and case do not count.
+  defp check_plugin_type(%PluginContents{content_type: type}, candidates, label)
+       when is_binary(type) do
+    case Enum.find(candidates, &(is_binary(&1) and media_type(&1) != media_type(type))) do
+      nil ->
+        :ok
+
+      other ->
+        {:error,
+         invalid(
+           "#{label} is plugin contents of type #{inspect(type)}, but the part also " <>
+             "names the content type #{inspect(other)}. The plugin contents set the content " <>
+             "type, so leave the other one out or make them the same."
+         )}
+    end
+  end
+
+  defp check_plugin_type(%PluginContents{content_type: type}, _candidates, label) do
+    {:error,
+     invalid("#{label} has plugin contents with content type #{inspect(type)}, expected a string")}
+  end
+
+  defp media_type(type) do
+    type |> String.split(";", parts: 2) |> hd() |> String.trim() |> String.downcase()
   end
 
   # The body rules, shared by HTTP parts and `plan_body/4`. `candidates` are the
@@ -552,6 +618,9 @@ defmodule PactEx.Consumer.Apply do
 
   defp body(handle, part, {:binary, type, binary}),
     do: native(Native.with_binary_body(handle, part, type, binary))
+
+  defp body(handle, part, {:plugin, type, json}),
+    do: native(Native.interaction_contents(handle, part, type, json))
 
   defp value(value, _label) when is_binary(value), do: {:ok, value}
   defp value(value, label) when is_map(value), do: encode_json(value, label)

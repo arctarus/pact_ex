@@ -6,7 +6,7 @@ defmodule PactEx.MockServer do
   `PactEx.Consumer.run/4` manage it. Send the requests of your test to `url`.
   """
 
-  alias PactEx.{Error, Native}
+  alias PactEx.{Error, Native, Plugin}
 
   @enforce_keys [:port, :url, :pact_dir, :pact_ref]
   defstruct [:port, :url, :pact_dir, :pact_ref]
@@ -90,11 +90,14 @@ defmodule PactEx.MockServer do
   Stops the server and frees its resources. Always returns `:ok`, also when
   the server was already stopped.
 
+  Also unloads the plugins of the pact (see `PactEx.using_plugin/3`), so that
+  a plugin process with no other user exits. That happens once per pact.
+
   Read `matched?/1` and `mismatches/1` before calling it.
   """
   @spec stop(t()) :: :ok
-  def stop(%__MODULE__{port: port}) do
+  def stop(%__MODULE__{port: port, pact_ref: pact_ref}) do
     Native.cleanup_mock_server(port)
-    :ok
+    Plugin.cleanup(pact_ref)
   end
 end
