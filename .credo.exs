@@ -170,7 +170,13 @@
           {Credo.Check.Refactor.IoPuts, [files: %{excluded: ["test/"]}]},
           {Credo.Check.Warning.MapGetUnsafePass, []},
           {Credo.Check.Warning.MixEnv, []},
-          {Credo.Check.Warning.UnsafeToAtom, []}
+          {Credo.Check.Warning.UnsafeToAtom, []},
+
+          #
+          ## Opt-in style checks this project chose to enforce.
+          #
+          {Credo.Check.Readability.Specs, []},
+          {Credo.Check.Readability.StrictModuleLayout, []}
         ],
         disabled: [
           #
@@ -190,8 +196,6 @@
           {Credo.Check.Readability.SeparateAliasRequire, []},
           {Credo.Check.Readability.SingleFunctionToBlockPipe, []},
           {Credo.Check.Readability.SinglePipe, []},
-          {Credo.Check.Readability.Specs, []},
-          {Credo.Check.Readability.StrictModuleLayout, []},
           {Credo.Check.Readability.WithCustomTaggedTuple, []},
           {Credo.Check.Refactor.ABCSize, []},
           {Credo.Check.Refactor.AppendSingleItem, []},

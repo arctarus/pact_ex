@@ -4,6 +4,7 @@ defmodule PactEx.MixProject do
   @version "0.1.0"
   @source_url "https://github.com/arctarus/pact_ex"
 
+  @spec project() :: keyword()
   def project do
     [
       app: :pact_ex,
@@ -31,10 +32,12 @@ defmodule PactEx.MixProject do
   end
 
   # `mix precommit` runs in the test environment, because it runs `mix test`.
+  @spec cli() :: keyword()
   def cli do
     [preferred_envs: [precommit: :test]]
   end
 
+  @spec application() :: keyword()
   def application do
     [
       extra_applications: [:logger]

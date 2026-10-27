@@ -1,11 +1,11 @@
 defmodule PactEx.Native.LargeBodyTest do
   use ExUnit.Case, async: false
 
-  @moduletag :tmp_dir
-  @moduletag timeout: 120_000
-
   alias PactEx.{Consumer, HTTP, Native}
   alias PactEx.Consumer.{Apply, BodyCheck}
+
+  @moduletag :tmp_dir
+  @moduletag timeout: 120_000
 
   # About 5 MB of JSON text, and the same description as a map. A scan of a
   # body this size takes tens of milliseconds, far more than the 1 ms a NIF

@@ -1,6 +1,8 @@
 defmodule PactEx.Consumer.BodyCheck do
   @moduledoc false
 
+  alias PactEx.Native
+
   # Checks the text handed to `pactffi_with_body` under an XML or form type.
   #
   # PactEx does not predict what pact_ffi will do from the Elixir term. It
@@ -23,8 +25,6 @@ defmodule PactEx.Consumer.BodyCheck do
 
   @matcher_key "pact:matcher:type"
   @max_u64 18_446_744_073_709_551_615
-
-  alias PactEx.Native
 
   @doc """
   Checks a body that pact_ffi reads as a description, before it reaches
