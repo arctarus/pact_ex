@@ -42,8 +42,8 @@ impl Encoder for Text {
 }
 
 /// Copies a string returned by pact_ffi into a Rust `String` and frees it.
-/// An empty string is how pact_ffi reports a failure: it returns `Err` with
-/// the last error message of `function`.
+/// A null pointer is an `Err` with the last error message of `function`. An
+/// empty string is returned as it is: what it means depends on the caller.
 ///
 /// # Safety
 ///
@@ -59,11 +59,7 @@ unsafe fn take_string(function: &str, ptr: *const c_char) -> Result<String, FfiE
         .into_owned();
     // The pointer came from `CString::into_raw` in pact_ffi.
     pactffi_string_delete(ptr as *mut c_char);
-    if text.is_empty() {
-        Err(last_error(function, 1))
-    } else {
-        Ok(text)
-    }
+    Ok(text)
 }
 
 /// Sets a metadata entry. `value` is JSON text.
@@ -96,6 +92,12 @@ fn write_file(handle: PactHandle, dir: &str, overwrite: bool) -> Result<(), FfiE
 }
 
 /// Reifies the message of `handle`.
+///
+/// An empty string is a valid result: pact-plugin-driver turns zero-byte plugin
+/// contents (a protobuf message with only default fields) into an empty body,
+/// and `pactffi_message_reify` returns `""` for it. The same `""` comes back
+/// for a handle that is not an async message, so a wrong-kind handle is not an
+/// error here. The public API never passes one.
 fn reify(handle: InteractionHandle) -> Result<String, FfiError> {
     const NAME: &str = "pactffi_message_reify";
     // SAFETY: `InteractionHandle` and `MessageHandle` are both
@@ -116,7 +118,13 @@ fn generate_contents(handle: InteractionHandle) -> Result<String, FfiError> {
     clear_error();
     let ptr = pactffi_sync_message_generate_contents(handle);
     // SAFETY: `ptr` was just returned by `pactffi_sync_message_generate_contents`.
-    unsafe { take_string(NAME, ptr) }
+    let text = unsafe { take_string(NAME, ptr) }?;
+    // Unlike a reified message, empty generated contents mean a failure.
+    if text.is_empty() {
+        Err(last_error(NAME, 1))
+    } else {
+        Ok(text)
+    }
 }
 
 // DirtyIo: like every builder NIF, these take pact_ffi's global `PACT_HANDLES`
@@ -217,9 +225,12 @@ mod tests {
     #[test]
     fn reify_reads_an_interaction_handle_as_a_message_handle() {
         let pact = v4_pact();
+        // A first interaction makes the second one use a non-zero index. The
+        // descriptions differ: pact_ffi replaces an interaction that has the
+        // same description, so the index would stay at 1.
+        let first_description = CString::new("a first message").unwrap();
+        let first = pactffi_new_message_interaction(pact, first_description.as_ptr());
         let description = CString::new("a message").unwrap();
-        // A first interaction makes the second one use a non-zero index.
-        let _first = pactffi_new_message_interaction(pact, description.as_ptr());
         let interaction = pactffi_new_message_interaction(pact, description.as_ptr());
         with_json_body(
             interaction,
@@ -238,18 +249,21 @@ mod tests {
         let json = parse(&on_large_stack(move || reify(interaction)).unwrap());
         assert_eq!(json["contents"]["content"]["temp"], 23.0);
         assert_eq!(json["metadata"]["queue"], "weather");
+
+        // The first message has no contents yet, so it reifies to "".
+        assert_eq!(on_large_stack(move || reify(first)).unwrap(), "");
         pactffi_free_pact_handle(pact);
     }
 
     #[test]
-    fn reify_fails_for_an_interaction_that_is_not_an_async_message() {
+    fn reify_returns_an_empty_string_for_a_message_with_an_empty_body() {
+        // pact_ffi returns "" for an empty body and for a handle that is not an
+        // async message. `reify` passes it on, it is not an error.
         let pact = v4_pact();
         let description = CString::new("a sync message").unwrap();
         let interaction = pactffi_new_sync_message_interaction(pact, description.as_ptr());
 
-        let error = on_large_stack(move || reify(interaction)).unwrap_err();
-        assert_eq!(error.function, "pactffi_message_reify");
-        assert_eq!(error.code, 1);
+        assert_eq!(on_large_stack(move || reify(interaction)).unwrap(), "");
         pactffi_free_pact_handle(pact);
     }
 

@@ -57,10 +57,13 @@ defmodule PactEx.Native.MessagesTest do
     assert [%{"type" => "Asynchronous/Messages"}] = written["interactions"]
   end
 
-  test "message_reify on a sync message interaction returns an error" do
+  # pact_ffi returns "" for an empty body (zero-byte plugin contents) and for a
+  # handle that is not an async message. Both are `{:ok, ""}`: the public API
+  # never passes a wrong-kind handle.
+  test "message_reify returns an empty string when pact_ffi has nothing to reify" do
     i = Native.new_sync_message_interaction(v4_pact(), "a sync message")
 
-    assert {:error, %{function: "pactffi_message_reify", code: 1}} = Native.message_reify(i)
+    assert {:ok, ""} = Native.message_reify(i)
   end
 
   test "sync_message_generate_contents on an async message interaction returns an error" do
