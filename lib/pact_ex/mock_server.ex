@@ -20,7 +20,12 @@ defmodule PactEx.MockServer do
 
   @doc false
   @spec build_url(String.t(), non_neg_integer()) :: String.t()
-  def build_url(host, port) do
+  def build_url(host, port), do: "http://" <> build_address(host, port)
+
+  # `host:port`, with an IPv6 host in brackets.
+  @doc false
+  @spec build_address(String.t(), non_neg_integer()) :: String.t()
+  def build_address(host, port) do
     host =
       if String.contains?(host, ":") and not String.starts_with?(host, "[") do
         "[" <> host <> "]"
@@ -28,7 +33,7 @@ defmodule PactEx.MockServer do
         host
       end
 
-    "http://#{host}:#{port}"
+    "#{host}:#{port}"
   end
 
   @doc """

@@ -36,7 +36,7 @@ defmodule PactEx.SyncMessage do
   The pact needs that plugin, see `PactEx.using_plugin/3`.
   """
 
-  alias PactEx.{Error, Pact, PluginContents}
+  alias PactEx.{Error, MismatchError, Pact, PluginContents}
   alias PactEx.SyncMessage.{Generated, Runner}
 
   @enforce_keys [:description]
@@ -134,15 +134,27 @@ defmodule PactEx.SyncMessage do
 
   ## Options
 
-    * `:transport` - not supported yet, and anything but `nil` raises
-      `ArgumentError`. Defaults to `nil`.
-    * `:host` - the host of the transport. Defaults to `"127.0.0.1"`.
-    * `:port` - the port of the transport, `0` to let the system choose one.
-      Defaults to `0`.
-    * `:transport_config` - the configuration of the transport, a map.
-      Defaults to `nil`.
+    * `:transport` - the name of a transport a plugin provides, such as
+      `"grpc"` for the protobuf plugin. A mock server for that transport runs
+      while `fun` does, and `fun` finds its port and address in
+      `t:PactEx.SyncMessage.Generated.t/0` under `:transport`. Without it,
+      `fun` gets only the contents. Defaults to `nil`.
+    * `:host` - the host the transport binds to. Defaults to `"127.0.0.1"`.
+    * `:port` - the port the transport binds to, from 0 to 65535. `0` lets the
+      system choose one. Defaults to `0`.
+    * `:transport_config` - the configuration of the transport, a map sent as
+      JSON. Defaults to `nil`.
 
-  Raises `ArgumentError` on unknown options.
+  `:host`, `:port` and `:transport_config` are used and checked only with a
+  `:transport`.
+
+  With a transport, `run/4` also checks the mock server after `fun` returns,
+  as `PactEx.Consumer.run/4` does. The pact is written only if every expected
+  request arrived and matched. The mock server is stopped, and the plugins
+  unloaded, when `fun` returns or raises.
+
+  Raises `ArgumentError` on unknown options, and with a transport on a
+  `:host`, `:port` or `:transport_config` of the wrong type.
 
   Returns `:ok`, or `{:error, %PactEx.Error{}}` when the message cannot be
   built. A `-101` error comes before any native call, and `fun` does not run.
@@ -154,10 +166,21 @@ defmodule PactEx.SyncMessage do
       would get one response fewer;
     * the plugin contents are set and the pact has no plugin, or a content type
       of the message names another media type than they do;
-    * the request, a response, a provider state param or the plugin contents
-      cannot be encoded as JSON, or an object repeats a key.
+    * the request, a response, a provider state param, the plugin contents or
+      the transport config cannot be encoded as JSON, or an object repeats a
+      key.
+
+  With a transport it also returns:
+
+    * `{:error, %PactEx.MismatchError{}}` - an expected request never arrived
+      or did not match. Nothing is written.
+    * `{:error, %PactEx.Error{}}` with code `-102` - the mock server reported a
+      failed match without details, for example when the plugin failed to
+      answer. Nothing is written. Any other `PactEx.Error` means the transport
+      could not start.
   """
-  @spec run(Pact.t(), t(), (Generated.t() -> any()), keyword()) :: :ok | {:error, Error.t()}
+  @spec run(Pact.t(), t(), (Generated.t() -> any()), keyword()) ::
+          :ok | {:error, Error.t() | MismatchError.t()}
   def run(%Pact{} = pact, %__MODULE__{} = message, fun, opts \\ []) when is_function(fun, 1) do
     opts =
       Keyword.validate!(opts, transport: nil, host: "127.0.0.1", port: 0, transport_config: nil)

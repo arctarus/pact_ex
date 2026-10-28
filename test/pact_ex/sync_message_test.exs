@@ -316,10 +316,61 @@ defmodule PactEx.SyncMessageTest do
       end
     end
 
-    test "a transport is not supported yet", %{pact: pact} do
-      assert_raise ArgumentError, "transport support lands in Task 5", fn ->
-        SyncMessage.run(pact, user_message(), fn _ -> :ok end, transport: "grpc")
+    test "transport options of the wrong type raise before any native call", %{pact: pact} do
+      # A missing plugin would fail with code 2 if the runner got as far as loading it.
+      pact = PactEx.using_plugin(pact, "pact-ex-no-such-plugin", "9.9.9")
+      run = fn opts -> SyncMessage.run(pact, user_message(), fn _ -> :ok end, opts) end
+
+      for opts <- [
+            [transport: :grpc],
+            [transport: "grpc", port: -1],
+            [transport: "grpc", port: 65_536],
+            [transport: "grpc", port: "80"],
+            [transport: "grpc", port: 1.5],
+            [transport: "grpc", host: :localhost],
+            [transport: "grpc", host: nil],
+            [transport: "grpc", transport_config: [a: 1]],
+            [transport: "grpc", transport_config: "{}"]
+          ] do
+        assert_raise ArgumentError, ~r/must be/, fn -> run.(opts) end
       end
+    end
+
+    test "transport options are not checked without a transport", %{pact: pact} do
+      assert :ok =
+               SyncMessage.run(pact, user_message(), fn _ -> :ok end,
+                 port: "80",
+                 host: nil,
+                 transport_config: "x"
+               )
+    end
+
+    test "a transport config that cannot be encoded is rejected before any native call", %{
+      pact: pact
+    } do
+      pact = PactEx.using_plugin(pact, "pact-ex-no-such-plugin", "9.9.9")
+
+      for config <- [%{"a" => {1, 2}}, %{:a => 1, "a" => 2}] do
+        assert {:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101} = error} =
+                 SyncMessage.run(pact, user_message(), fn _ -> flunk("must not run") end,
+                   transport: "grpc",
+                   transport_config: config
+                 )
+
+        assert error.message =~ "option :transport_config"
+      end
+    end
+
+    test "a transport no plugin provides returns an error and does not run the function", %{
+      pact: pact,
+      tmp_dir: dir
+    } do
+      assert {:error, %PactEx.Error{}} =
+               SyncMessage.run(pact, user_message(), fn _ -> flunk("must not run") end,
+                 transport: "pact-ex-no-such-transport"
+               )
+
+      refute File.exists?(pact_file(dir))
     end
 
     test "options are validated", %{pact: pact} do
