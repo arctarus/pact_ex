@@ -3,6 +3,8 @@ defmodule PactEx.SyncMessageTest do
   import PactEx.Matchers
   alias PactEx.SyncMessage
 
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
   @moduletag :tmp_dir
 
   setup %{tmp_dir: dir} do

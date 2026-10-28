@@ -3,6 +3,9 @@ defmodule PactEx.PluginContentsTest do
 
   alias PactEx.{Consumer, Consumer.Apply, HTTP, MockServer, Plugin}
 
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
+
   @entry_point "PactEx.Consumer.start_mock_server/3"
 
   defp interaction(body, opts \\ []) do

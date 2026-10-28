@@ -75,6 +75,17 @@ jobs:
       # :abort_matrix), which runs each risky input in its own OS process.
       - run: mix test
 
+      # The protobuf plugin writes its own log files. When a job fails, they
+      # show how far a hung or crashed plugin got. This step comes before the
+      # leak poll, so it also runs when the poll fails.
+      - name: Upload the plugin logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: plugin-logs-${{ matrix.os }}-otp${{ matrix.beam.otp }}
+          path: ~/.pact/plugins/protobuf-0.8.1/log/
+          if-no-files-found: ignore
+
       # No plugin process may survive the suite. Cleanup and freeing can finish
       # asynchronously, so poll for up to 5 s before failing. The script is the
       # step's own file, so `pgrep -f` does not match this shell's command line.

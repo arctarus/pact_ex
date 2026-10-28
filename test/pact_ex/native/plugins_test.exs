@@ -4,6 +4,9 @@ defmodule PactEx.Native.PluginsTest do
   use ExUnit.Case, async: false
   alias PactEx.Native
 
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
+
   setup do
     previous = System.get_env("PACT_PLUGIN_DIR")
 

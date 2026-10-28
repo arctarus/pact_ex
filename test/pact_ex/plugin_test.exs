@@ -3,6 +3,9 @@ defmodule PactEx.PluginTest do
 
   alias PactEx.{Consumer, Consumer.Apply, HTTP, Plugin}
 
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
+
   test "using_plugin/3 accumulates plugins in order" do
     pact =
       "c"

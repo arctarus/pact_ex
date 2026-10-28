@@ -4,6 +4,8 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
   alias PactEx.{Plugin, SyncMessage}
   alias Routeguide.RouteGuide.Stub
 
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
   @moduletag :plugin
   @moduletag :capture_log
   @moduletag :tmp_dir

@@ -3,6 +3,8 @@ defmodule PactEx.Acceptance.ProtobufHttpTest do
 
   alias PactEx.{Consumer, HTTP, Plugin}
 
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
   @moduletag :plugin
   @moduletag :tmp_dir
 
