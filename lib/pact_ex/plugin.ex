@@ -29,12 +29,11 @@ defmodule PactEx.Plugin do
     %PluginContents{content_type: content_type, contents: contents}
   end
 
-  @doc """
-  Loads the plugins of `pact` into the pact handle `pact_ref`, in order.
-
-  Stops at the first plugin that fails. The ones loaded before it stay loaded:
-  call `cleanup/1`.
-  """
+  @doc false
+  # Loads the plugins of `pact` into the pact handle `pact_ref`, in order. Stops
+  # at the first plugin that fails. The ones loaded before it stay loaded: call
+  # `cleanup/1`. Internal: it takes a raw pact handle, and plugins loaded by hand
+  # on `mock.pact_ref` would leak.
   @spec load_all(reference(), Pact.t()) :: :ok | {:error, Error.t()}
   def load_all(pact_ref, %Pact{plugins: plugins}) do
     Apply.each_ok(plugins, fn {name, version} ->
@@ -42,12 +41,10 @@ defmodule PactEx.Plugin do
     end)
   end
 
-  @doc """
-  Releases the plugins loaded for the pact handle `pact_ref`.
-
-  A plugin process exits when no pact uses it any more. Calling it again for
-  the same pact does nothing, and so does a pact without plugins.
-  """
+  @doc false
+  # Releases the plugins loaded for the pact handle `pact_ref`. A plugin process
+  # exits when no pact uses it any more. Calling it again for the same pact does
+  # nothing, and so does a pact without plugins. Internal, like `load_all/2`.
   @spec cleanup(reference()) :: :ok
   def cleanup(pact_ref) do
     Native.cleanup_plugins(pact_ref)
