@@ -81,4 +81,22 @@ defmodule PactEx.PluginTest do
 
     assert message =~ "PactEx.using_plugin"
   end
+
+  test "a plugin that is declared twice is rejected before any native call" do
+    # `using_plugin/3` refuses it, so build the pact by hand. A missing plugin would
+    # fail with code 2 if the runner got as far as loading it.
+    plugins = [{"pact-ex-no-such-plugin", nil}, {"pact-ex-no-such-plugin", "9.9.9"}]
+    pact = %{PactEx.new("c", "p") | plugins: plugins}
+    i = "x" |> HTTP.interaction() |> HTTP.with_request(:get, "/x") |> HTTP.will_respond_with(200)
+
+    assert {:error,
+            %PactEx.Error{
+              function: "PactEx.Consumer.start_mock_server/3",
+              code: -101,
+              message: message
+            }} = Consumer.start_mock_server(pact, [i])
+
+    assert message =~ "pact-ex-no-such-plugin"
+    assert message =~ "more than once"
+  end
 end

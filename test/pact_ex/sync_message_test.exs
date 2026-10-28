@@ -245,6 +245,18 @@ defmodule PactEx.SyncMessageTest do
       end
     end
 
+    test "a plugin that is declared twice is rejected before any native call", %{pact: pact} do
+      # A missing plugin would fail with code 2 if the runner got as far as loading it.
+      pact = %{pact | plugins: [{"pact-ex-no-such-plugin", nil}, {"pact-ex-no-such-plugin", nil}]}
+      sm = SyncMessage.new("twice") |> SyncMessage.with_request(%{"a" => 1})
+
+      assert {:error,
+              %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101, message: message}} =
+               SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
+
+      assert message =~ "more than once"
+    end
+
     test "plugin contents in a pact without plugins are rejected before any native call", %{
       tmp_dir: dir
     } do

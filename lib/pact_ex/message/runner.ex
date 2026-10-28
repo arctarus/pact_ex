@@ -45,6 +45,7 @@ defmodule PactEx.Message.Runner do
              pact.plugins,
              @entry_point
            ),
+         :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
          {:ok, contents} <- plan_contents(message),
          {:ok, states} <- plan_states(message.provider_states),
          {:ok, metadata} <- plan_metadata(message.metadata) do

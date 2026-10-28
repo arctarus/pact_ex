@@ -157,6 +157,33 @@ defmodule PactEx.Consumer.Apply do
 
   def check_plugins_declared(_plugin_contents?, _plugins, _entry_point), do: :ok
 
+  @doc false
+  # `PactEx.using_plugin/3` already refuses a repeated name, but a `%Pact{}` can
+  # be built by hand. Every load adds one use of the plugin, and pact_ffi's
+  # cleanup removes one use per unique name, so a repeated name would leave
+  # the plugin process running for ever.
+  @spec check_plugins_unique([{String.t(), String.t() | nil}], String.t()) ::
+          :ok | {:error, Error.t()}
+  def check_plugins_unique(plugins, entry_point) do
+    names = Enum.map(plugins, &elem(&1, 0))
+
+    case Enum.uniq(names -- Enum.uniq(names)) do
+      [] ->
+        :ok
+
+      repeated ->
+        {:error,
+         %{
+           invalid(
+             "the pact uses the plugin #{Enum.map_join(repeated, ", ", &inspect/1)} more " <>
+               "than once. Declare each plugin once with PactEx.using_plugin/3: a plugin " <>
+               "loaded twice would never exit."
+           )
+           | function: entry_point
+         }}
+    end
+  end
+
   # -- Plan: headers and body of each part, decided before any native call ----
 
   defp plan(%Interaction{description: description} = interaction) do

@@ -186,7 +186,8 @@ defmodule PactEx.Consumer do
              Enum.any?(interactions, &Apply.plugin_contents?/1),
              pact.plugins,
              @entry_point
-           ) do
+           ),
+         :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point) do
       pact_ref = Native.new_pact(pact.consumer, pact.provider)
 
       # Once the pact exists, every way out except `{:ok, mock}` unloads the
