@@ -1,7 +1,7 @@
 defmodule PactEx.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/arctarus/pact_ex"
 
   @spec project() :: keyword()
@@ -52,6 +52,9 @@ defmodule PactEx.MixProject do
       {:rustler_precompiled, "~> 0.10"},
       {:rustler, "~> 0.38", optional: true},
       {:req, "~> 0.5", only: :test},
+      {:grpc, "~> 1.0", only: :test},
+      {:protobuf, "~> 0.17", only: :test},
+      {:mint, "~> 1.9", only: :test},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}

@@ -99,4 +99,32 @@ defmodule PactEx.Native do
 
   @spec cleanup_mock_server(0..65_535) :: boolean()
   def cleanup_mock_server(_port), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec new_message_interaction(pact(), String.t()) :: interaction()
+  def new_message_interaction(_pact, _description), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec new_sync_message_interaction(pact(), String.t()) :: interaction()
+  def new_sync_message_interaction(_pact, _description), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec with_metadata(interaction(), String.t(), String.t(), part()) :: outcome()
+  def with_metadata(_interaction, _key, _value, _part), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec message_reify(interaction()) :: {:ok, String.t()} | {:error, ffi_error()}
+  def message_reify(_interaction), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec sync_message_generate_contents(interaction()) :: {:ok, String.t()} | {:error, ffi_error()}
+  def sync_message_generate_contents(_interaction), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec pact_handle_write_file(pact(), String.t(), boolean()) :: outcome()
+  def pact_handle_write_file(_pact, _dir, _overwrite), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec using_plugin(pact(), String.t(), String.t() | nil) :: outcome()
+  def using_plugin(_pact, _name, _version), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec interaction_contents(interaction(), part(), String.t(), String.t()) :: outcome()
+  def interaction_contents(_interaction, _part, _content_type, _contents_json),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec cleanup_plugins(pact()) :: boolean()
+  def cleanup_plugins(_pact), do: :erlang.nif_error(:nif_not_loaded)
 end

@@ -54,6 +54,17 @@ jobs:
       - run: cargo test
         working-directory: native/pact_ex_nif
 
+      # The :plugin tests and the ignored Rust test need the protobuf plugin.
+      # Without it the :plugin tests are excluded and the ignored Rust test
+      # cannot run, so CI would skip them without a word.
+      - run: scripts/install-protobuf-plugin.sh
+
+      # Runs the Rust test of the exactly-once plugin cleanup against the real
+      # plugin. It asserts that no plugin process runs when it starts, so it
+      # must come before `mix test`.
+      - run: cargo test -- --ignored
+        working-directory: native/pact_ex_nif
+
       # The test environment is the one `mix test` uses next, so the NIF is
       # not built twice.
       - run: mix compile --warnings-as-errors
@@ -62,7 +73,48 @@ jobs:
 
       # Includes the abort matrix (test/abort_matrix_test.exs, tag
       # :abort_matrix), which runs each risky input in its own OS process.
+      #
+      # When a plugin manifest is missing, pact-plugin-driver fetches the
+      # plugin index from GitHub. That request has no timeout and runs while
+      # the driver holds its global lock. The tests only need the offline "not
+      # found" path, so the proxy points at a closed port and the fetch fails
+      # at once. The variables must be set before the VM starts:
+      # `System.put_env` in test_helper.exs does not reach the NIF. Only the
+      # upper-case names: GitHub treats env names case-insensitively, and
+      # reqwest reads either spelling.
       - run: mix test
+        env:
+          HTTPS_PROXY: http://127.0.0.1:9
+          NO_PROXY: 127.0.0.1,localhost,::1
+          # Debugging the macOS plugin hang: the driver's trace log shows who
+          # holds its plugin lock. Uploaded below when the job fails.
+          PACT_EX_TRACE_LOG: ${{ matrix.os == 'macos-latest' && 'pact-trace.log' || '' }}
+
+      # The protobuf plugin writes its own log files. When a job fails, they
+      # show how far a hung or crashed plugin got. This step comes before the
+      # leak poll, so it also runs when the poll fails.
+      - name: Upload the plugin logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: plugin-logs-${{ matrix.os }}-otp${{ matrix.beam.otp }}
+          path: |
+            ~/.pact/plugins/protobuf-0.8.1/log/
+            pact-trace.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # No plugin process may survive the suite. Cleanup and freeing can finish
+      # asynchronously, so poll for up to 5 s before failing. The script is the
+      # step's own file, so `pgrep -f` does not match this shell's command line.
+      - name: No plugin process is left running
+        if: success() || failure()
+        run: |
+          for _ in $(seq 50); do
+            pgrep -f pact-protobuf-plugin > /dev/null || exit 0
+            sleep 0.1
+          done
+          exit 1
 
   lint:
     name: Credo and Dialyzer

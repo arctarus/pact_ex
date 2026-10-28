@@ -76,6 +76,7 @@ defmodule PactEx.LogTest do
   end
 
   @tag :tmp_dir
+  @tag :applies_logger
   test "file sink receives FFI logs and a second init is rejected", %{tmp_dir: dir} do
     # A failed attach happens before a logger is applied, so a later valid init
     # must still succeed. (pact_ffi creates missing parent directories, so the

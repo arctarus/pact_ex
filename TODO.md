@@ -8,6 +8,9 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 ## Minor: code
 
+- [ ] `pact_handle_write_file` code 2 says "is the directory writable?", but pact_ffi also returns 2 when it cannot merge with an existing pact file (`messages.rs:89`). Drop the hint or name both causes.
+- [ ] README `on_exit` advice: a second `MockServer.stop/1` stops by port, so if the port was reused it can stop another test's server. Say to use `on_exit` instead of stopping in the test body, or make `stop/1` check the pact handle.
+- [ ] Replace `<release date>` in `CHANGELOG.md` before tagging `v0.2.0`.
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
 - [ ] Each `mock_server_mismatches` call leaks a CString into pact_ffi until cleanup. Document it, or avoid polling.
 - [ ] A huge `examples` count in an XML description can stall `with_body` or run out of memory. It isn't rejected, because pact_ffi accepts it.
@@ -34,4 +37,5 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 - [ ] The stack test aborts the test binary on regression instead of failing cleanly. `RUST_MIN_STACK` ≥ 4 MiB would hide a regression.
 - [ ] Test-support modules (`PactFile`, `AnimalClient`) are in the global namespace. `consumer_test.exs` keeps its own `read_pact`.
 - [ ] Abort matrix: add an `:ok` case for a working mixed Content-Type list such as `[%{"value" => ["a"]}, "text/plain"]` (only unit-tested today).
+- [ ] `System.put_env("PACT_PLUGIN_DIR", ...)` in `native/plugins_test.exs` and in the `plugin_contents_test.exs` `load_all` tests never reaches the plugin driver, so those tests do not exercise the missing-dir path they describe. Locally, `mix test` still reaches GitHub for the missing-plugin tests unless `HTTPS_PROXY` is set in the shell.
 - [ ] Remove the duplicate out-of-range create test, and the stray path comment on line 1 of `test/pact_ex/native/mock_server_test.exs`.
