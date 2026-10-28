@@ -37,4 +37,5 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 - [ ] The stack test aborts the test binary on regression instead of failing cleanly. `RUST_MIN_STACK` ≥ 4 MiB would hide a regression.
 - [ ] Test-support modules (`PactFile`, `AnimalClient`) are in the global namespace. `consumer_test.exs` keeps its own `read_pact`.
 - [ ] Abort matrix: add an `:ok` case for a working mixed Content-Type list such as `[%{"value" => ["a"]}, "text/plain"]` (only unit-tested today).
+- [ ] `System.put_env("PACT_PLUGIN_DIR", ...)` in `native/plugins_test.exs` and in the `plugin_contents_test.exs` `load_all` tests never reaches the plugin driver, so those tests do not exercise the missing-dir path they describe. Locally, `mix test` still reaches GitHub for the missing-plugin tests unless `HTTPS_PROXY` is set in the shell.
 - [ ] Remove the duplicate out-of-range create test, and the stray path comment on line 1 of `test/pact_ex/native/mock_server_test.exs`.
