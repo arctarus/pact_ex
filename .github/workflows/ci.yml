@@ -86,6 +86,9 @@ jobs:
         env:
           HTTPS_PROXY: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost,::1
+          # Debugging the macOS plugin hang: the driver's trace log shows who
+          # holds its plugin lock. Uploaded below when the job fails.
+          PACT_EX_TRACE_LOG: ${{ matrix.os == 'macos-latest' && 'pact-trace.log' || '' }}
 
       # The protobuf plugin writes its own log files. When a job fails, they
       # show how far a hung or crashed plugin got. This step comes before the
@@ -95,7 +98,10 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: plugin-logs-${{ matrix.os }}-otp${{ matrix.beam.otp }}
-          path: ~/.pact/plugins/protobuf-0.8.1/log/
+          path: |
+            ~/.pact/plugins/protobuf-0.8.1/log/
+            pact-trace.log
+          retention-days: 7
           if-no-files-found: ignore
 
       # No plugin process may survive the suite. Cleanup and freeing can finish

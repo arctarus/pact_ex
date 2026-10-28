@@ -7,4 +7,18 @@
 # and fail too. With 120 s the driver times out first, the load returns an
 # error, and the cleanup runs.
 
-ExUnit.start(exclude: if(PactEx.Plugin.installed?("protobuf", "0.8.1"), do: [], else: [:plugin]))
+# Set PACT_EX_TRACE_LOG to a file path to write the native trace log there. CI
+# does this on macOS: the driver logs when it waits for and gets its plugin lock,
+# so a hung run shows who held it. The native logger can be applied once per OS
+# process, so the one log test that applies it is excluded in that case.
+trace_log = System.get_env("PACT_EX_TRACE_LOG", "")
+
+if trace_log != "" do
+  :ok = PactEx.Log.init(level: :trace, sink: {:file, trace_log})
+end
+
+excluded =
+  if(PactEx.Plugin.installed?("protobuf", "0.8.1"), do: [], else: [:plugin]) ++
+    if(trace_log != "", do: [:applies_logger], else: [])
+
+ExUnit.start(exclude: excluded)
