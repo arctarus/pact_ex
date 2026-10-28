@@ -35,7 +35,10 @@ defmodule PactEx.PluginTest do
     assert {:error, %PactEx.Error{function: "pactffi_using_plugin", code: 2, message: message}} =
              Consumer.start_mock_server(pact, [i])
 
-    assert message =~ "pact-ex-no-such-plugin"
+    assert String.starts_with?(
+             message,
+             "pact-ex-no-such-plugin 9.9.9: Could not load plugin - "
+           )
   end
 
   test "plugin contents next to a different explicit content type are rejected before any native call" do

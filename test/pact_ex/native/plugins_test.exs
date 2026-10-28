@@ -34,7 +34,10 @@ defmodule PactEx.Native.PluginsTest do
     assert {:error, %{function: "pactffi_using_plugin", code: 2, message: message}} =
              Native.using_plugin(pact, "pact-ex-no-such-plugin", "9.9.9")
 
-    assert message =~ "pact-ex-no-such-plugin"
+    assert String.starts_with?(
+             message,
+             "pact-ex-no-such-plugin 9.9.9: Could not load plugin - "
+           )
 
     # The failed load recorded no plugin, but the call still claims the one-way
     # cleanup. A second call does nothing.

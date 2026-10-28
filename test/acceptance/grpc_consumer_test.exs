@@ -70,8 +70,11 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
                transport: "grpc"
              )
 
-    written = dir |> Path.join("grpcconsumer-grpcprovider.json") |> File.read!() |> JSON.decode!()
+    written = PactFile.read!(dir, {"grpcconsumer", "grpcprovider"})
     assert [%{"name" => "protobuf", "version" => "0.8.1"}] = written["metadata"]["plugins"]
+
+    assert [%{"type" => "Synchronous/Messages", "description" => "Route guide - GetFeature"}] =
+             written["interactions"]
   end
 
   test "NOT_FOUND response metadata reaches the client as a gRPC error", %{pact: pact} do
@@ -117,7 +120,8 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
   end
 
   test "an exception stops the server, cleans plugins and leaves no plugin process", %{
-    pact: pact
+    pact: pact,
+    tmp_dir: dir
   } do
     sm =
       get_feature(%{
@@ -126,8 +130,24 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
       })
 
     assert_raise RuntimeError, fn ->
-      SyncMessage.run(pact, sm, fn _ -> raise "boom" end, transport: "grpc")
+      SyncMessage.run(
+        pact,
+        sm,
+        fn %{transport: %{port: port}} ->
+          send(self(), {:port, port})
+          raise "boom"
+        end,
+        transport: "grpc"
+      )
     end
+
+    refute File.exists?(Path.join(dir, "grpcconsumer-grpcprovider.json"))
+
+    # The mock server is gone: it no longer reports a match, and there is
+    # nothing left to stop.
+    assert_received {:port, port}
+    refute PactEx.Native.mock_server_matched(port)
+    refute PactEx.Native.cleanup_mock_server(port)
 
     # Cleanup and the freeing of the pact can finish asynchronously, and the
     # plugin process exits on its own schedule. `gone?/0` polls for up to 5 s.
