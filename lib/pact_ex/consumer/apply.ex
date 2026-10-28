@@ -142,20 +142,25 @@ defmodule PactEx.Consumer.Apply do
   end
 
   @doc false
-  @spec check_plugins_declared(boolean(), [{String.t(), String.t() | nil}], String.t()) ::
-          :ok | {:error, Error.t()}
-  def check_plugins_declared(true, [], entry_point) do
+  # `subject` names what has the plugin contents, as in "the message".
+  @spec check_plugins_declared(
+          boolean(),
+          [{String.t(), String.t() | nil}],
+          String.t(),
+          String.t()
+        ) :: :ok | {:error, Error.t()}
+  def check_plugins_declared(true, [], entry_point, subject) do
     {:error,
      %{
        invalid(
-         "an interaction has plugin contents (PactEx.Plugin.contents/2), but the pact has " <>
+         "#{subject} has plugin contents (PactEx.Plugin.contents/2), but the pact has " <>
            "no plugin. Add the plugin that handles it with PactEx.using_plugin/3."
        )
        | function: entry_point
      }}
   end
 
-  def check_plugins_declared(_plugin_contents?, _plugins, _entry_point), do: :ok
+  def check_plugins_declared(_plugin_contents?, _plugins, _entry_point, _subject), do: :ok
 
   @doc false
   # Plugin contents need a V4 pact: with an older spec pact_ffi writes the raw

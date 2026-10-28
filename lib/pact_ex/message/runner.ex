@@ -43,7 +43,8 @@ defmodule PactEx.Message.Runner do
            Apply.check_plugins_declared(
              match?(%PluginContents{}, message.contents),
              pact.plugins,
-             @entry_point
+             @entry_point,
+             "the message"
            ),
          :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
          {:ok, contents} <- plan_contents(message),

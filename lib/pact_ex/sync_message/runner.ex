@@ -129,7 +129,13 @@ defmodule PactEx.SyncMessage.Runner do
 
     with :ok <- check_spec(pact),
          :ok <- check_contents_present(message),
-         :ok <- Apply.check_plugins_declared(plugin_contents != nil, pact.plugins, @entry_point),
+         :ok <-
+           Apply.check_plugins_declared(
+             plugin_contents != nil,
+             pact.plugins,
+             @entry_point,
+             "the sync message"
+           ),
          :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
          {:ok, contents} <- plan_contents(message),
          {:ok, states} <- plan_states(message.provider_states),

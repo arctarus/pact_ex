@@ -112,8 +112,11 @@ defmodule PactEx.MessageTest do
       Message.new("plugin")
       |> Message.with_contents(PactEx.Plugin.contents("application/protobuf", %{"a" => 1}))
 
-    assert {:error, %PactEx.Error{function: "PactEx.Message.run/4", code: -101}} =
+    assert {:error, %PactEx.Error{function: "PactEx.Message.run/4", code: -101, message: message}} =
              Message.run(pact, msg, fn _ -> flunk("the handler must not run") end)
+
+    assert message =~ "the message has plugin contents"
+    assert message =~ "PactEx.using_plugin"
   end
 
   test "a content type that names another media type than the plugin contents is rejected", %{

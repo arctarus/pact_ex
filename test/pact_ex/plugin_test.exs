@@ -79,6 +79,7 @@ defmodule PactEx.PluginTest do
               message: message
             }} = Consumer.start_mock_server(PactEx.new("c", "p"), [i])
 
+    assert message =~ "an interaction has plugin contents"
     assert message =~ "PactEx.using_plugin"
   end
 

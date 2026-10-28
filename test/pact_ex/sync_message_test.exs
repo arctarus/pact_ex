@@ -268,8 +268,11 @@ defmodule PactEx.SyncMessageTest do
           PactEx.Plugin.contents("application/protobuf", %{"a" => 1})
         )
 
-      assert {:error, %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101}} =
+      assert {:error,
+              %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101, message: message}} =
                SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
+
+      assert message =~ "the sync message has plugin contents"
     end
 
     test "plugin contents need no request or response of their own", %{pact: pact} do

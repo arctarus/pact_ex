@@ -183,7 +183,13 @@ defmodule PactEx.Consumer do
     plugin_contents? = Enum.any?(interactions, &Apply.plugin_contents?/1)
 
     with :ok <- validate_all(interactions),
-         :ok <- Apply.check_plugins_declared(plugin_contents?, pact.plugins, @entry_point),
+         :ok <-
+           Apply.check_plugins_declared(
+             plugin_contents?,
+             pact.plugins,
+             @entry_point,
+             "an interaction"
+           ),
          :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
          :ok <- Apply.check_plugin_spec(plugin_contents?, pact.spec, @entry_point) do
       pact_ref = Native.new_pact(pact.consumer, pact.provider)
