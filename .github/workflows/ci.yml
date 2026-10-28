@@ -54,6 +54,17 @@ jobs:
       - run: cargo test
         working-directory: native/pact_ex_nif
 
+      # The :plugin tests and the ignored Rust test need the protobuf plugin.
+      # Without it the :plugin tests are excluded, and a missing plugin would
+      # be downloaded from the pact-plugins index on every run instead.
+      - run: scripts/install-protobuf-plugin.sh
+
+      # Runs the Rust test of the exactly-once plugin cleanup against the real
+      # plugin. It asserts that no plugin process runs when it starts, so it
+      # must come before `mix test`.
+      - run: cargo test -- --ignored
+        working-directory: native/pact_ex_nif
+
       # The test environment is the one `mix test` uses next, so the NIF is
       # not built twice.
       - run: mix compile --warnings-as-errors
@@ -63,6 +74,17 @@ jobs:
       # Includes the abort matrix (test/abort_matrix_test.exs, tag
       # :abort_matrix), which runs each risky input in its own OS process.
       - run: mix test
+
+      # No plugin process may survive the suite. Cleanup and freeing can finish
+      # asynchronously, so poll for up to 5 s before failing. The script is the
+      # step's own file, so `pgrep -f` does not match this shell's command line.
+      - name: No plugin process is left running
+        run: |
+          for _ in $(seq 50); do
+            pgrep -f pact-protobuf-plugin > /dev/null || exit 0
+            sleep 0.1
+          done
+          exit 1
 
   lint:
     name: Credo and Dialyzer
