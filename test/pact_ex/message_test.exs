@@ -55,6 +55,21 @@ defmodule PactEx.MessageTest do
              end)
   end
 
+  test "a pact file that cannot be written is an error that names the directory", %{
+    tmp_dir: dir
+  } do
+    blocker = Path.join(dir, "blocker")
+    File.write!(blocker, "x")
+    pact = PactEx.new("msg-consumer", "msg-provider", pact_dir: blocker)
+    msg = Message.new("unwritable") |> Message.with_contents(%{"a" => 1})
+
+    assert {:error,
+            %PactEx.Error{function: "pactffi_pact_handle_write_file", code: 2, message: message}} =
+             Message.run(pact, msg, fn _reified -> :ok end)
+
+    assert message =~ "could not write the pact file to #{blocker}"
+  end
+
   test "a pact that is not V4 is rejected", %{tmp_dir: dir} do
     pact = PactEx.new("msg-consumer", "msg-provider", pact_dir: dir, spec: :v3)
     msg = Message.new("v3") |> Message.with_contents(%{"a" => 1})

@@ -11,7 +11,7 @@ use pact_ffi::pactffi_string_delete;
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
 
 use crate::args::{arg_cstring, decode_arg};
-use crate::error::{clear_error, last_error, to_cstring, FfiError, Outcome};
+use crate::error::{clear_error, failure_with, last_error, to_cstring, FfiError, Outcome};
 use crate::handles::{InteractionResource, PactResource};
 use crate::http::Part;
 use crate::stack::on_large_stack;
@@ -80,14 +80,28 @@ fn set_metadata(
     }
 }
 
+/// Describes a failure code of `pactffi_pact_handle_write_file`. pact_ffi
+/// stores no error message for codes 2 and 3, it only logs them.
+fn write_message(code: i64, dir: &str) -> Option<String> {
+    let message = match code {
+        1 => "writing the pact file panicked".to_owned(),
+        2 => format!("could not write the pact file to {dir}, is the directory writable?"),
+        3 => "the pact was not found, it may have been freed already".to_owned(),
+        _ => return None,
+    };
+    Some(message)
+}
+
 /// Writes the pact of `handle` to `dir`.
 fn write_file(handle: PactHandle, dir: &str, overwrite: bool) -> Result<(), FfiError> {
     const NAME: &str = "pactffi_pact_handle_write_file";
-    let dir = to_cstring(NAME, dir)?;
+    let c_dir = to_cstring(NAME, dir)?;
     clear_error();
-    match pactffi_pact_handle_write_file(handle, dir.as_ptr(), overwrite) {
+    match pactffi_pact_handle_write_file(handle, c_dir.as_ptr(), overwrite) {
         0 => Ok(()),
-        code => Err(last_error(NAME, i64::from(code))),
+        code => Err(failure_with(NAME, i64::from(code), |code| {
+            write_message(code, dir)
+        })),
     }
 }
 
@@ -341,6 +355,16 @@ mod tests {
             on_large_stack(move || write_file(pact, dir.to_str().unwrap(), false)).unwrap_err();
         assert_eq!(error.function, "pactffi_pact_handle_write_file");
         assert_eq!(error.code, 3);
+        assert!(error.message.contains("not found"), "{}", error.message);
+    }
+
+    #[test]
+    fn write_message_names_the_directory_and_the_failure_kind() {
+        assert!(write_message(2, "/some/dir").unwrap().contains("/some/dir"));
+        assert!(write_message(1, "/x").unwrap().contains("panicked"));
+        assert!(write_message(3, "/x").unwrap().contains("not found"));
+        assert!(write_message(0, "/x").is_none());
+        assert!(write_message(4, "/x").is_none());
     }
 
     #[test]

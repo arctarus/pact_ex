@@ -101,6 +101,22 @@ defmodule PactEx.Native.MessagesTest do
     end
   end
 
+  @tag :tmp_dir
+  test "pact_handle_write_file names the directory when it cannot write", %{tmp_dir: dir} do
+    # A file where the directory should be: no user can create it, not even root.
+    blocker = Path.join(dir, "blocker")
+    File.write!(blocker, "x")
+
+    pact = v4_pact()
+    i = Native.new_message_interaction(pact, "unwritable message")
+    :ok = Native.with_body(i, :request, "application/json", ~s({"a": 1}))
+
+    assert {:error, %{function: "pactffi_pact_handle_write_file", code: 2, message: message}} =
+             Native.pact_handle_write_file(pact, blocker, false)
+
+    assert message =~ "could not write the pact file to #{blocker}"
+  end
+
   test "pact_handle_write_file rejects a NUL byte in the directory" do
     assert {:error, %{function: "pactffi_pact_handle_write_file", code: -100}} =
              Native.pact_handle_write_file(v4_pact(), "a\0b", false)
