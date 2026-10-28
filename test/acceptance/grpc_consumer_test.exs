@@ -34,7 +34,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
   end
 
   defp call(port, point) do
-    {:ok, channel} = GRPC.Stub.connect("127.0.0.1:#{port}")
+    {:ok, channel} = GRPC.Stub.connect("127.0.0.1:#{port}", adapter: GRPC.Client.Adapters.Mint)
 
     try do
       Stub.get_feature(channel, point)

@@ -54,7 +54,7 @@ defmodule PactEx.MixProject do
       {:req, "~> 0.5", only: :test},
       {:grpc, "~> 1.0", only: :test},
       {:protobuf, "~> 0.17", only: :test},
-      {:gun, "~> 2.4", only: :test},
+      {:mint, "~> 1.9", only: :test},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
