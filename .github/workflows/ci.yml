@@ -55,8 +55,8 @@ jobs:
         working-directory: native/pact_ex_nif
 
       # The :plugin tests and the ignored Rust test need the protobuf plugin.
-      # Without it the :plugin tests are excluded, and a missing plugin would
-      # be downloaded from the pact-plugins index on every run instead.
+      # Without it the :plugin tests are excluded and the ignored Rust test
+      # cannot run, so CI would skip them without a word.
       - run: scripts/install-protobuf-plugin.sh
 
       # Runs the Rust test of the exactly-once plugin cleanup against the real
@@ -79,6 +79,7 @@ jobs:
       # asynchronously, so poll for up to 5 s before failing. The script is the
       # step's own file, so `pgrep -f` does not match this shell's command line.
       - name: No plugin process is left running
+        if: success() || failure()
         run: |
           for _ in $(seq 50); do
             pgrep -f pact-protobuf-plugin > /dev/null || exit 0
