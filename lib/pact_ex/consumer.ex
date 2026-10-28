@@ -155,9 +155,9 @@ defmodule PactEx.Consumer do
   order. They stay loaded until `PactEx.MockServer.stop/1`. When this function
   returns an error or raises, they are already unloaded. An interaction with
   plugin contents (`PactEx.Plugin.contents/2`) needs at least one plugin in the
-  pact, or this function returns a `-101` error before any native call. A
-  plugin that is not on disk is installed by the plugin driver, which needs
-  network access.
+  pact and a pact with spec `:v4`, or this function returns a `-101` error
+  before any native call. A plugin that is not on disk is installed by the
+  plugin driver, which needs network access.
 
   ## Options
 
@@ -180,14 +180,12 @@ defmodule PactEx.Consumer do
     host = Keyword.fetch!(opts, :host)
     port = Keyword.fetch!(opts, :port)
 
+    plugin_contents? = Enum.any?(interactions, &Apply.plugin_contents?/1)
+
     with :ok <- validate_all(interactions),
-         :ok <-
-           Apply.check_plugins_declared(
-             Enum.any?(interactions, &Apply.plugin_contents?/1),
-             pact.plugins,
-             @entry_point
-           ),
-         :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point) do
+         :ok <- Apply.check_plugins_declared(plugin_contents?, pact.plugins, @entry_point),
+         :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
+         :ok <- Apply.check_plugin_spec(plugin_contents?, pact.spec, @entry_point) do
       pact_ref = Native.new_pact(pact.consumer, pact.provider)
 
       # Once the pact exists, every way out except `{:ok, mock}` unloads the

@@ -50,7 +50,7 @@ defmodule PactEx.Consumer.Apply do
   # another media type is an error.
 
   alias PactEx.Consumer.BodyCheck
-  alias PactEx.{Error, HTTP, Native, PluginContents}
+  alias PactEx.{Error, HTTP, Native, Pact, PluginContents}
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -156,6 +156,24 @@ defmodule PactEx.Consumer.Apply do
   end
 
   def check_plugins_declared(_plugin_contents?, _plugins, _entry_point), do: :ok
+
+  @doc false
+  # Plugin contents need a V4 pact: with an older spec pact_ffi writes the raw
+  # bytes and no `metadata.plugins`, so a provider cannot verify the pact.
+  @spec check_plugin_spec(boolean(), Pact.spec(), String.t()) :: :ok | {:error, Error.t()}
+  def check_plugin_spec(true, spec, entry_point) when spec != :v4 do
+    {:error,
+     %{
+       invalid(
+         "an interaction has plugin contents (PactEx.Plugin.contents/2), but the pact has " <>
+           "spec #{inspect(spec)}. Plugin contents need a V4 pact (spec: :v4): an older " <>
+           "pact would not record the plugin, and a provider could not verify it."
+       )
+       | function: entry_point
+     }}
+  end
+
+  def check_plugin_spec(_plugin_contents?, _spec, _entry_point), do: :ok
 
   @doc false
   # `PactEx.using_plugin/3` already refuses a repeated name, but a `%Pact{}` can

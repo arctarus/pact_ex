@@ -99,4 +99,31 @@ defmodule PactEx.PluginTest do
     assert message =~ "pact-ex-no-such-plugin"
     assert message =~ "more than once"
   end
+
+  test "plugin contents in a pact that is not V4 are rejected before any native call" do
+    body = Plugin.contents("application/protobuf", %{"a" => 1})
+
+    i =
+      "x"
+      |> HTTP.interaction()
+      |> HTTP.with_request(:get, "/x")
+      |> HTTP.will_respond_with(200, body: body)
+
+    # A missing plugin would fail with code 2 if the runner got as far as loading it.
+    for spec <- [:v2, :v3] do
+      pact =
+        "c"
+        |> PactEx.new("p", spec: spec)
+        |> PactEx.using_plugin("pact-ex-no-such-plugin", "9.9.9")
+
+      assert {:error,
+              %PactEx.Error{
+                function: "PactEx.Consumer.start_mock_server/3",
+                code: -101,
+                message: message
+              }} = Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "V4"
+    end
+  end
 end
