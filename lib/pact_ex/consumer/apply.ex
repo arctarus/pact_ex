@@ -710,7 +710,11 @@ defmodule PactEx.Consumer.Apply do
   end
 
   @doc false
-  @spec native(:ok | {:ok, term()} | {:error, map()}) :: :ok | {:ok, term()} | {:error, Error.t()}
+  # One spec per shape, so a caller that passes `:ok | {:error, _}` gets
+  # `:ok | {:error, _}` back, never `{:ok, _}`.
+  @spec native(:ok) :: :ok
+  @spec native({:ok, term()}) :: {:ok, term()}
+  @spec native({:error, map()}) :: {:error, Error.t()}
   def native(:ok), do: :ok
   def native({:ok, _} = ok), do: ok
   def native({:error, error}), do: {:error, Error.from_native(error)}
@@ -726,7 +730,59 @@ defmodule PactEx.Consumer.Apply do
     end)
   end
 
-  defp invalid(message) do
-    %Error{function: @entry_point, code: @invalid_code, message: message}
+  @doc false
+  # Like `Enum.map/2`, for a function that returns `{:ok, value}` or
+  # `{:error, term}`. Stops at the first error.
+  @spec map_ok(Enumerable.t(), (term() -> {:ok, term()} | {:error, term()})) ::
+          {:ok, [term()]} | {:error, term()}
+  def map_ok(enumerable, fun) do
+    enumerable
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
+      case fun.(item) do
+        {:ok, value} -> {:cont, {:ok, [value | acc]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      error -> error
+    end
   end
+
+  @doc false
+  # Plans the provider states of a message, without any native call. Returns
+  # `{name, params_json | nil}` pairs for `given_states/2`.
+  @spec plan_states([{String.t(), map() | nil}], String.t()) ::
+          {:ok, [{String.t(), String.t() | nil}]} | {:error, Error.t()}
+  def plan_states(states, entry_point) do
+    map_ok(states, fn
+      {name, nil} ->
+        {:ok, {name, nil}}
+
+      {name, params} ->
+        with {:ok, json} <-
+               plan_json(params, "params of provider state #{inspect(name)}", entry_point) do
+          {:ok, {name, json}}
+        end
+    end)
+  end
+
+  @doc false
+  # Applies the states of `plan_states/2` to an interaction handle.
+  @spec given_states(reference(), [{String.t(), String.t() | nil}]) ::
+          :ok | {:error, Error.t()}
+  def given_states(handle, states) do
+    each_ok(states, fn
+      {name, nil} -> native(Native.given(handle, name))
+      {name, json} -> native(Native.given_with_params(handle, name, json))
+    end)
+  end
+
+  @doc false
+  @spec invalid(String.t(), String.t()) :: Error.t()
+  def invalid(message, entry_point) do
+    %Error{function: entry_point, code: @invalid_code, message: message}
+  end
+
+  defp invalid(message), do: invalid(message, @entry_point)
 end

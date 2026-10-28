@@ -88,6 +88,7 @@ defmodule PactEx.Consumer do
   alias PactEx.HTTP.Interaction
 
   @entry_point "PactEx.Consumer.start_mock_server/3"
+  @run_entry_point "PactEx.Consumer.run/4"
 
   @doc """
   Runs `fun` against a mock server for `interactions` and writes the pact if
@@ -123,7 +124,7 @@ defmodule PactEx.Consumer do
         # so `stop/1` must run after everything else.
         try do
           fun.(mock)
-          finish(mock)
+          finish(mock, @run_entry_point)
         after
           MockServer.stop(mock)
         end
@@ -230,13 +231,18 @@ defmodule PactEx.Consumer do
     end
   end
 
-  defp finish(mock) do
+  # Checks the mock server and writes the pact if everything matched. A `-102`
+  # error names `entry_point`. Shared with `PactEx.SyncMessage.run/4`.
+  @doc false
+  @spec finish(MockServer.t(), String.t()) :: :ok | {:error, MismatchError.t() | Error.t()}
+  def finish(mock, entry_point) do
     matched? = MockServer.matched?(mock)
     mismatches = if matched?, do: [], else: MockServer.mismatches(mock)
 
     case verdict(matched?, mismatches) do
       :match -> MockServer.write_pact(mock, overwrite: false)
-      {:error, _error} = error -> error
+      {:error, %Error{} = error} -> {:error, %{error | function: entry_point}}
+      {:error, %MismatchError{}} = error -> error
     end
   end
 
@@ -250,7 +256,7 @@ defmodule PactEx.Consumer do
   def verdict(false, []) do
     {:error,
      %Error{
-       function: "PactEx.Consumer.run/4",
+       function: @run_entry_point,
        code: -102,
        message:
          "the mock server reported a failed match without mismatch details, for example " <>

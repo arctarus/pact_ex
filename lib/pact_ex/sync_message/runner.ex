@@ -16,7 +16,6 @@ defmodule PactEx.SyncMessage.Runner do
   alias PactEx.SyncMessage.Generated
 
   @entry_point "PactEx.SyncMessage.run/4"
-  @invalid_code -101
 
   @spec run(Pact.t(), SyncMessage.t(), (Generated.t() -> any()), keyword()) ::
           :ok | {:error, Error.t() | MismatchError.t()}
@@ -67,21 +66,10 @@ defmodule PactEx.SyncMessage.Runner do
 
       try do
         fun.(%{generated | transport: %{port: port, address: address}})
-        finish(mock)
+        Consumer.finish(mock, @entry_point)
       after
         Native.cleanup_mock_server(port)
       end
-    end
-  end
-
-  defp finish(mock) do
-    matched? = MockServer.matched?(mock)
-    mismatches = if matched?, do: [], else: MockServer.mismatches(mock)
-
-    case Consumer.verdict(matched?, mismatches) do
-      :match -> MockServer.write_pact(mock, overwrite: false)
-      {:error, %Error{} = error} -> {:error, %{error | function: @entry_point}}
-      {:error, %MismatchError{}} = error -> error
     end
   end
 
@@ -138,7 +126,7 @@ defmodule PactEx.SyncMessage.Runner do
            ),
          :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
          {:ok, contents} <- plan_contents(message),
-         {:ok, states} <- plan_states(message.provider_states),
+         {:ok, states} <- Apply.plan_states(message.provider_states, @entry_point),
          {:ok, transport} <- plan_transport(transport) do
       {:ok, %{contents: contents, states: states, transport: transport}}
     end
@@ -232,21 +220,8 @@ defmodule PactEx.SyncMessage.Runner do
   defp plan_responses(message) do
     message.responses
     |> Enum.with_index(1)
-    |> map_ok(fn {{response, type}, number} ->
+    |> Apply.map_ok(fn {{response, type}, number} ->
       Apply.plan_body(response, type, "sync message response #{number}", @entry_point)
-    end)
-  end
-
-  defp plan_states(states) do
-    map_ok(states, fn
-      {name, nil} ->
-        {:ok, {name, nil}}
-
-      {name, params} ->
-        with {:ok, json} <-
-               Apply.plan_json(params, "params of provider state #{inspect(name)}", @entry_point) do
-          {:ok, {name, json}}
-        end
     end)
   end
 
@@ -257,18 +232,11 @@ defmodule PactEx.SyncMessage.Runner do
          :ok <- Plugin.load_all(pact_ref, pact) do
       handle = Native.new_sync_message_interaction(pact_ref, message.description)
 
-      with :ok <- provider_states(handle, plan.states),
+      with :ok <- Apply.given_states(handle, plan.states),
            :ok <- contents(handle, plan.contents) do
         generate(handle)
       end
     end
-  end
-
-  defp provider_states(handle, states) do
-    Apply.each_ok(states, fn
-      {name, nil} -> Apply.native(Native.given(handle, name))
-      {name, json} -> Apply.native(Native.given_with_params(handle, name, json))
-    end)
   end
 
   defp contents(handle, {:plugin, type, json}),
@@ -296,21 +264,5 @@ defmodule PactEx.SyncMessage.Runner do
 
   # -- Helpers ----------------------------------------------------------------
 
-  defp map_ok(enumerable, fun) do
-    enumerable
-    |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
-      case fun.(item) do
-        {:ok, value} -> {:cont, {:ok, [value | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> {:ok, Enum.reverse(acc)}
-      error -> error
-    end
-  end
-
-  defp invalid(message) do
-    %Error{function: @entry_point, code: @invalid_code, message: message}
-  end
+  defp invalid(message), do: Apply.invalid(message, @entry_point)
 end
