@@ -1,7 +1,7 @@
 defmodule PactEx.SyncMessage do
   @moduledoc """
-  A synchronous message: one request and one or more responses, such as a gRPC
-  call.
+  A synchronous message: one request and any number of responses (none is
+  allowed), such as a gRPC call.
 
       pact = PactEx.new("web", "user-service")
 
@@ -154,7 +154,11 @@ defmodule PactEx.SyncMessage do
   unloaded, when `fun` returns or raises.
 
   Raises `ArgumentError` on unknown options, and with a transport on a
-  `:host`, `:port` or `:transport_config` of the wrong type.
+  `:host`, `:port` or `:transport_config` of the wrong type. It also raises
+  `ArgumentError` on a NUL byte in the consumer, the provider or the
+  description of the message. A NUL byte in the name of a provider state
+  returns a `{:error, %PactEx.Error{code: -100}}`, as
+  `PactEx.Consumer.start_mock_server/3` does for its arguments.
 
   Returns `:ok`, or `{:error, %PactEx.Error{}}` when the message cannot be
   built. A `-101` error comes before any native call, and `fun` does not run.
@@ -176,8 +180,11 @@ defmodule PactEx.SyncMessage do
       or did not match. Nothing is written.
     * `{:error, %PactEx.Error{}}` with code `-102` - the mock server reported a
       failed match without details, for example when the plugin failed to
-      answer. Nothing is written. Any other `PactEx.Error` means the transport
-      could not start.
+      answer. Nothing is written.
+
+  A `PactEx.Error` with another code comes from a native call: a plugin that
+  cannot be loaded, a transport that cannot start, or a pact file that cannot
+  be written.
   """
   @spec run(Pact.t(), t(), (Generated.t() -> any()), keyword()) ::
           :ok | {:error, Error.t() | MismatchError.t()}
@@ -189,7 +196,8 @@ defmodule PactEx.SyncMessage do
   end
 
   @doc """
-  Like `run/4`, but returns `:ok` or raises the `PactEx.Error`.
+  Like `run/4`, but returns `:ok` or raises the `PactEx.Error` or
+  `PactEx.MismatchError`.
   """
   @spec run!(Pact.t(), t(), (Generated.t() -> any()), keyword()) :: :ok
   def run!(%Pact{} = pact, %__MODULE__{} = message, fun, opts \\ []) do

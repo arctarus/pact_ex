@@ -364,7 +364,11 @@ GitHub when the test runs. So that run needs network access.
   `Plugin ... was not found`, or `Plugin directory "..." does not exist` when
   there is no plugin directory at all.
 - The download has no timeout. On a network that drops packets, a test that
-  loads a plugin can hang, and the driver holds its plugin lock meanwhile.
+  loads a plugin can hang, and the driver holds its plugin lock meanwhile. That
+  hung download also blocks every plugin cleanup. pact_ffi guards all pact
+  builders with one global lock, and a cleanup holds it while it waits for the
+  plugin lock. So every pact builder call in the VM waits too, and other tests
+  stall with it.
 - Each plugin load takes at least 500 ms.
 
 ### Using a plugin
@@ -442,8 +446,12 @@ message =
       {:ok, channel} = GRPC.Stub.connect(address)
       point = %Routeguide.Point{latitude: 180, longitude: 200}
 
-      {:ok, %Routeguide.Feature{name: "Big Tree"}} =
-        Routeguide.RouteGuide.Stub.get_feature(channel, point)
+      try do
+        {:ok, %Routeguide.Feature{name: "Big Tree"}} =
+          Routeguide.RouteGuide.Stub.get_feature(channel, point)
+      after
+        GRPC.Stub.disconnect(channel)
+      end
     end,
     transport: "grpc"
   )
@@ -452,10 +460,13 @@ message =
 Like `Consumer.run/4`, a run with a transport checks the mock server after your
 function returns. It writes the pact only if every expected request arrived and
 matched. Otherwise it returns `{:error, %PactEx.MismatchError{}}`. The other
-options are `:host`, `:port` and `:transport_config`. To answer with a gRPC
-error, set `"responseMetadata" => %{"grpc-status" => "NOT_FOUND"}` in the
+options are `:host`, `:port` and `:transport_config`. When the plugin mock
+server reports a failed match without any details, the run returns
+`{:error, %PactEx.Error{code: -102}}`, and nothing is written. To answer with a
+gRPC error, set `"responseMetadata" => %{"grpc-status" => "NOT_FOUND"}` in the
 description. The client then gets a gRPC error, not a decoding failure. The
-full test is `test/acceptance/grpc_consumer_test.exs`.
+full test is
+[`test/acceptance/grpc_consumer_test.exs`](https://github.com/arctarus/pact_ex/blob/main/test/acceptance/grpc_consumer_test.exs).
 
 ### The cleanup guarantee
 
@@ -476,6 +487,16 @@ process can still be there for a short time after `run/4` returns. A brutal kill
 of the calling process (an ExUnit timeout or a linked crash) skips the explicit
 cleanup. The pact is then cleaned up when the VM garbage collects it, on a
 background thread, which can take longer.
+
+Garbage collection is not a fallback when the VM exits. A mock server that is
+still referenced at that point leaves its plugin process running. When you use
+`start_mock_server/3` in a test, stop the server in `on_exit`, right after you
+start it:
+
+```elixir
+{:ok, mock} = PactEx.Consumer.start_mock_server(pact, interactions)
+on_exit(fn -> PactEx.MockServer.stop(mock) end)
+```
 
 ## Logging
 

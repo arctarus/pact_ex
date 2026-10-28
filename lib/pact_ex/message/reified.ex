@@ -9,9 +9,13 @@ defmodule PactEx.Message.Reified do
       numbers and so on), and `nil` for JSON `null`. For any other content
       type, the raw bytes: a string for text, a binary for binary contents.
       Text with a JSON content type that is not valid JSON is raw bytes too.
-    * `:metadata` - the metadata of the message, as a map of decoded JSON.
+    * `:metadata` - the metadata of the message, as a map of decoded JSON. It
+      includes the keys that pact_ffi adds, such as `contentType`.
     * `:content_type` - the content type of the contents, or `nil` when there
       are none.
+
+  An empty body, such as zero-byte plugin contents (a protobuf message with
+  only default fields), gives `contents: ""` and `metadata: %{}`.
   """
 
   defstruct contents: nil, metadata: %{}, content_type: nil

@@ -117,6 +117,11 @@ defmodule PactEx.Message do
   `opts` takes no options yet, and raises `ArgumentError` on any. It keeps the
   signature in line with `PactEx.SyncMessage.run/4`.
 
+  Raises `ArgumentError` on a NUL byte in the consumer, the provider or the
+  description of the message. A NUL byte in the name of a provider state or a
+  metadata key returns a `{:error, %PactEx.Error{code: -100}}`, as
+  `PactEx.Consumer.start_mock_server/3` does for its arguments.
+
   Returns `:ok`, or `{:error, %PactEx.Error{}}` when the message cannot be
   built. A `-101` error comes before any native call, and `fun` does not run.
   It is returned when:
