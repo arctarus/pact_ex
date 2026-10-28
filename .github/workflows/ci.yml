@@ -79,13 +79,13 @@ jobs:
       # the driver holds its global lock. The tests only need the offline "not
       # found" path, so the proxy points at a closed port and the fetch fails
       # at once. The variables must be set before the VM starts:
-      # `System.put_env` in test_helper.exs does not reach the NIF.
+      # `System.put_env` in test_helper.exs does not reach the NIF. Only the
+      # upper-case names: GitHub treats env names case-insensitively, and
+      # reqwest reads either spelling.
       - run: mix test
         env:
           HTTPS_PROXY: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost,::1
-          no_proxy: 127.0.0.1,localhost,::1
 
       # The protobuf plugin writes its own log files. When a job fails, they
       # show how far a hung or crashed plugin got. This step comes before the
