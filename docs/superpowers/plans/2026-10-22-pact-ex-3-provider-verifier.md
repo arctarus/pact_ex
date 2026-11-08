@@ -128,15 +128,21 @@ Expected: FAIL with `PactEx.Native.verify/1 is undefined or private`.
 - [ ] **Step 3: Implement `verifier.rs`**
 
 One `#[rustler::nif(schedule = "DirtyIo")] fn verify(config: VerifyConfig)`. Inside `on_large_stack`, call in this order:
-1. `pactffi_verifier_new_for_application("pact_ex", app_version)` and `set_provider_info`.
-2. `add_provider_transport` for each transport.
+1. `pactffi_verifier_new_for_application("pact_ex", app_version)`. It returns NULL only if it panicked: return `{:error, %{function: "pactffi_verifier_new_for_application", code: -1, ...}}` without calling `shutdown`. Then `set_provider_info`.
+2. `add_provider_transport` for each transport. The order matters: `set_provider_info` replaces the whole provider, transports included (`handle.rs` `update_provider_info`).
 3. `set_filter_info`, but only when a filter is set.
 4. `set_provider_state(url, teardown, 1)`, but only when `state_change_url` is set.
-5. `set_verification_options`, `set_publish_options` (only if `publish` is set), `set_consumer_filters`, `add_custom_header` for each header, then the file, directory and URL sources, `broker_source_with_selectors` (only if `broker` is set), and `set_no_pacts_is_error`.
-6. `execute`, then `json`, then `output`.
+5. `set_verification_options`, `set_coloured_output(0)`, `set_publish_options` (only if `publish` is set), `set_consumer_filters`, `add_custom_header` for each header, then the file, directory and URL sources, `broker_source_with_selectors` (only if `broker` is set), and `set_no_pacts_is_error`. The broker source must come after `set_provider_info`, because it copies the provider name when it is added.
+6. `execute`, then `json`, then `output(handle, 1)`.
 7. `shutdown`.
 
-A non-zero return from any `int`-returning setter returns `{:error, last_error(<fn>, c)}` after `shutdown`. Build the `const char *const *` arrays from a `Vec<CString>` that stays alive for the whole call.
+Coloured output is on by default. `strip_ansi` cleans only `output`, so without `set_coloured_output(0)` the `output` lines inside the JSON report carry ANSI codes.
+
+A non-zero return from any `int`-returning setter returns `{:error, error}`, where `error` is read with `failure_with(<fn>, c, describe)` before `shutdown`, on the same thread. `broker_source_with_selectors` returns `-1` for a selector that is not valid JSON and stores no message, so `describe` gives `"a consumer version selector is not valid JSON"` for it. Build the `const char *const *` arrays from a `Vec<CString>` that stays alive for the whole call.
+
+`json` and `output` return NULL only if they panicked: `output` does when a line holds a NUL byte (`CString::new(...).unwrap()`), which a binary provider response can cause. Treat a NULL `output` as `""`. A NULL `json` returns `{:error, %{function: "pactffi_verifier_json", code: -1, ...}}`. Free each non-NULL string with `pactffi_string_delete`.
+
+`execute` returns 0 (verified), 1 (verification failed) or 2 (it could not run, for example a plugin failed to load). With 2, the report's `errors` is empty and the reason is only in `output`.
 
 Temporary, for the spike only: if the env var `PACT_EX_VERIFIER_STACK=caller` is set, run the body directly on the dirty scheduler thread instead of `on_large_stack`.
 
