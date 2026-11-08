@@ -115,7 +115,7 @@ impl Encoder for Outcome {
     fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
         match self {
             Outcome::Ok => rustler::types::atom::ok().encode(env),
-            Outcome::Err(error) => (rustler::types::atom::error(), error.clone()).encode(env),
+            Outcome::Err(error) => (rustler::types::atom::error(), error).encode(env),
         }
     }
 }

@@ -8,38 +8,13 @@ use pact_ffi::mock_server::handles::{
     InteractionHandle, InteractionPart, MessageHandle, PactHandle,
 };
 use pact_ffi::pactffi_string_delete;
-use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
+use rustler::{NifResult, ResourceArc, Term};
 
 use crate::args::{arg_cstring, decode_arg};
 use crate::error::{clear_error, failure_with, last_error, to_cstring, FfiError, Outcome};
 use crate::handles::{InteractionResource, PactResource};
 use crate::http::Part;
 use crate::stack::on_large_stack;
-
-/// Result of a NIF that returns a string on success. Encodes as `{:ok, string}`
-/// or `{:error, map}`.
-pub enum Text {
-    Ok(String),
-    Err(FfiError),
-}
-
-impl From<Result<String, FfiError>> for Text {
-    fn from(result: Result<String, FfiError>) -> Self {
-        match result {
-            Ok(text) => Text::Ok(text),
-            Err(error) => Text::Err(error),
-        }
-    }
-}
-
-impl Encoder for Text {
-    fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
-        match self {
-            Text::Ok(text) => (rustler::types::atom::ok(), text.as_str()).encode(env),
-            Text::Err(error) => (rustler::types::atom::error(), error.clone()).encode(env),
-        }
-    }
-}
 
 /// Copies a string returned by pact_ffi into a Rust `String` and frees it.
 /// A null pointer is an `Err` with the last error message of `function`. An
@@ -179,15 +154,17 @@ fn with_metadata(
 // DirtyIo and large stack: pact_ffi runs the generators with `block_on`, which
 // can call a plugin, while it works on this thread.
 #[rustler::nif(schedule = "DirtyIo")]
-fn message_reify(interaction: ResourceArc<InteractionResource>) -> Text {
+fn message_reify(interaction: ResourceArc<InteractionResource>) -> Result<String, FfiError> {
     let handle = interaction.handle;
-    on_large_stack(move || reify(handle)).into()
+    on_large_stack(move || reify(handle))
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn sync_message_generate_contents(interaction: ResourceArc<InteractionResource>) -> Text {
+fn sync_message_generate_contents(
+    interaction: ResourceArc<InteractionResource>,
+) -> Result<String, FfiError> {
     let handle = interaction.handle;
-    on_large_stack(move || generate_contents(handle)).into()
+    on_large_stack(move || generate_contents(handle))
 }
 
 // DirtyIo: writing the pact takes `PACT_HANDLES` and does file I/O. Large
