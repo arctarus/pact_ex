@@ -109,7 +109,8 @@ fails if it holds anything else. `priv/` is git-ignored and not in the package.
   Keep them in sync with `nif_versions` in `lib/pact_ex/native.ex`.
 - `pact_ffi` and `pact_models` are pinned exactly. Upgrade them together, in a
   dedicated pull request.
-- The `x86_64-apple-darwin` job runs on `macos-15-intel`. GitHub retired
+- The `aarch64-apple-darwin` job runs on `macos-15` and the `x86_64-apple-darwin`
+  job on `macos-15-intel`. GitHub retired `macos-14` and
   `macos-13`.
 - `Cargo.lock` is committed and shipped. Do not remove it.
 - The workflows pin third-party actions by commit SHA, with the tag in a
