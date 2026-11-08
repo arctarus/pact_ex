@@ -60,7 +60,10 @@ fn set_metadata(
 fn write_message(code: i64, dir: &str) -> Option<String> {
     let message = match code {
         1 => "writing the pact file panicked".to_owned(),
-        2 => format!("could not write the pact file to {dir}, is the directory writable?"),
+        2 => format!(
+            "could not write the pact file to {dir}: the directory may not be writable, \
+             or the pact could not be merged with the file already there"
+        ),
         3 => "the pact was not found, it may have been freed already".to_owned(),
         _ => return None,
     };
