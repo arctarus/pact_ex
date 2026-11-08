@@ -147,9 +147,21 @@ defmodule PactEx.SyncMessage.Runner do
     {:error, invalid("sync messages need a V4 pact (spec: :v4), got #{inspect(spec)}.")}
   end
 
-  # Plugin contents set the whole message, so the request and responses are
-  # not looked at.
-  defp check_contents_present(%SyncMessage{plugin_contents: %PluginContents{}}), do: :ok
+  # Plugin contents set the whole message. A request or response given as
+  # well would be dropped without a word, so it is an error, as a lost value
+  # is everywhere else.
+  defp check_contents_present(%SyncMessage{plugin_contents: %PluginContents{}} = message) do
+    if message.request == nil and message.request_content_type == nil and message.responses == [] do
+      :ok
+    else
+      {:error,
+       invalid(
+         "the sync message has plugin contents and also a request or a response. The plugin " <>
+           "builds both, so drop PactEx.SyncMessage.with_request/3 and " <>
+           "PactEx.SyncMessage.will_respond_with/3"
+       )}
+    end
+  end
 
   defp check_contents_present(%SyncMessage{request: request}) when request in [nil, ""] do
     {:error,
@@ -176,16 +188,8 @@ defmodule PactEx.SyncMessage.Runner do
     end
   end
 
-  defp plan_contents(%SyncMessage{plugin_contents: %PluginContents{} = contents} = message) do
-    with :ok <-
-           Apply.check_plugin_content_type(
-             contents,
-             message.request_content_type,
-             "sync message request",
-             @entry_point
-           ),
-         :ok <- check_response_types(contents, message.responses),
-         {:ok, json} <-
+  defp plan_contents(%SyncMessage{plugin_contents: %PluginContents{} = contents}) do
+    with {:ok, json} <-
            Apply.plan_json(contents.contents, "sync message plugin contents", @entry_point) do
       {:ok, {:plugin, contents.content_type, json}}
     end
@@ -202,19 +206,6 @@ defmodule PactEx.SyncMessage.Runner do
          {:ok, responses} <- plan_responses(message) do
       {:ok, {:bodies, request, responses}}
     end
-  end
-
-  defp check_response_types(contents, responses) do
-    responses
-    |> Enum.with_index(1)
-    |> Apply.each_ok(fn {{_response, type}, number} ->
-      Apply.check_plugin_content_type(
-        contents,
-        type,
-        "sync message response #{number}",
-        @entry_point
-      )
-    end)
   end
 
   defp plan_responses(message) do

@@ -13,6 +13,8 @@ defmodule PactEx.Error do
       value type. `-102` means the mock server reported a failed match but
       returned no mismatch details, for example a plugin mock server that
       failed to answer or a server that was already stopped. Nothing is written.
+      `-103` means the plugins of the pact were already unloaded, so a plugin
+      cannot be loaded for it.
     * `:message` - a description of the failure.
   """
 

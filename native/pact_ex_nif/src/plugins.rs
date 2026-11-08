@@ -11,6 +11,7 @@ use crate::http::Part;
 use crate::stack::on_large_stack;
 
 const USING_PLUGIN: &str = "pactffi_using_plugin";
+const ALREADY_CLEANED_UP: i64 = -103;
 
 /// How errors name a plugin: `name version`, or just `name` without a version.
 fn plugin_label(name: &str, version: Option<&str>) -> String {
@@ -29,13 +30,15 @@ fn name_plugin(label: &str, mut error: FfiError) -> FfiError {
 
 /// The error for a pact whose plugins were already cleaned up. The cleanup flag
 /// is one-way: a plugin loaded after it would never be cleaned up and would
-/// leak its process.
+/// leak its process. The code is `-103`, not `2`: pact_ffi means "failed to
+/// load the plugin" by 2, and callers that filter on the code must be able to
+/// tell the two apart.
 fn already_cleaned_up(label: &str) -> FfiError {
     name_plugin(
         label,
         FfiError {
             function: USING_PLUGIN.to_owned(),
-            code: 2,
+            code: ALREADY_CLEANED_UP,
             message: "the plugins of this pact were already cleaned up".to_owned(),
         },
     )
@@ -143,7 +146,7 @@ mod tests {
     fn already_cleaned_up_names_the_plugin() {
         let error = already_cleaned_up("protobuf");
         assert_eq!(error.function, "pactffi_using_plugin");
-        assert_eq!(error.code, 2);
+        assert_eq!(error.code, -103);
         assert_eq!(
             error.message,
             "protobuf: the plugins of this pact were already cleaned up"
@@ -168,7 +171,7 @@ mod tests {
 
         let error = load(&pact, "protobuf", Some("0.8.1")).unwrap_err();
         assert_eq!(error.function, "pactffi_using_plugin");
-        assert_eq!(error.code, 2);
+        assert_eq!(error.code, -103);
         assert_eq!(
             error.message,
             "protobuf 0.8.1: the plugins of this pact were already cleaned up"
