@@ -38,7 +38,7 @@ pact_erlang parity for `pact_verifier`, plus transports.
 
 1. **The state handler raises or returns an error.** The verification fails with that interaction marked as an error and the handler's message in the report. The BEAM keeps running and the endpoint is stopped. Tested in Task 3.
 2. **No message provider for a description.** If a `fallback` is configured, it is used. Otherwise the endpoint answers 404 and the report names the missing description. Tested in Task 4.
-3. **No pacts found.** With `no_pacts_is_error: true` (the default) the result is `{:error, %VerificationError{}}`. With `false` it is `:ok`. Tested in Task 3.
+3. **No pacts found.** With `no_pacts_is_error: true` (the default) the result is `{:error, %VerificationError{}}`. With `false` it is `:ok`. This holds for every source. pact_verifier 1.4.7 checks the flag only when a Pact Broker returns no pacts. An empty directory, or a directory with no pact for this provider, verifies nothing and passes (`lib.rs` `walkdir`). So `verify/1` adds the same check for the other sources in Elixir (Task 3). A missing file or directory is always an error. Tested in Tasks 3 and 5.
 4. **The provider is unreachable.** Pointing at a closed port returns `{:error, %VerificationError{}}` within `request_timeout` and does not hang. Tested in Task 3.
 5. **Publishing without `provider_version`.** Option validation raises `ArgumentError` before any native call. Tested in Task 5.
 
@@ -113,8 +113,15 @@ defmodule PactEx.Native.VerifierTest do
     end
   end
 
-  test "no pacts is an error by default" do
-    assert {:ok, %{exit_code: code}} = Native.verify(base_config(%{dirs: [System.tmp_dir!() <> "/pact-ex-empty-#{System.unique_integer([:positive])}"]}))
+  # pact_verifier applies no_pacts_is_error only to a Pact Broker source. Task 3 adds the
+  # check for files and directories in Elixir.
+  test "directory sources ignore no_pacts_is_error", %{tmp_dir: dir} do
+    empty = Path.join(dir, "empty")
+    File.mkdir_p!(empty)
+    assert {:ok, %{exit_code: 0, json: json}} = Native.verify(base_config(%{dirs: [empty]}))
+    assert JSON.decode!(json)["interactionResults"] == []
+
+    assert {:ok, %{exit_code: code}} = Native.verify(base_config(%{dirs: [Path.join(dir, "missing")]}))
     assert code != 0
   end
 end
@@ -318,6 +325,7 @@ git commit -m "feat: add internal endpoint for provider states and message provi
     2. Call `Native.verify/1`.
     3. Always stop the endpoint (`try/after`).
     4. Exit code 0 → `:ok`. Otherwise → `{:error, %VerificationError{}}`. A native `{:error, map}` raises `PactEx.Error`.
+    5. Exit code 0 with an empty `report["interactionResults"]` and `no_pacts_is_error: true` → `{:error, %VerificationError{}}` whose message says that no interaction was verified for the provider. pact_verifier does not apply the flag to files and directories (Review Focus 3). Filters that match nothing end here too, which is what the flag is for.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -380,11 +388,16 @@ defmodule PactEx.VerifierTest do
     assert_raise ArgumentError, fn -> Options.to_native([provider: "p", state_handler: fn _, _, _ -> :ok end, state_change_url: "http://x"], 1) end
   end
 
-  test "no pacts: error by default, ok when disabled" do
-    empty = Path.join(System.tmp_dir!(), "pact-ex-empty-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(empty)
-    assert {:error, %PactEx.VerificationError{}} = Verifier.verify(provider: "p", dirs: [empty])
-    assert :ok = Verifier.verify(provider: "p", dirs: [empty], no_pacts_is_error: false)
+  @tag :tmp_dir
+  test "no pacts: error by default, ok when disabled", %{tmp_dir: dir} do
+    assert {:error, %PactEx.VerificationError{}} = Verifier.verify(provider: "p", dirs: [dir])
+    assert :ok = Verifier.verify(provider: "p", dirs: [dir], no_pacts_is_error: false)
+  end
+
+  @tag :tmp_dir
+  test "a missing directory is an error even when no pacts are allowed", %{tmp_dir: dir} do
+    missing = Path.join(dir, "missing")
+    assert {:error, %PactEx.VerificationError{}} = Verifier.verify(provider: "p", dirs: [missing], no_pacts_is_error: false)
   end
 
   @tag :tmp_dir
@@ -543,6 +556,16 @@ defmodule PactEx.Acceptance.BrokerTest do
     after
       AnimalProvider.stop(p)
     end
+  end
+
+  # The pact is published first, so the provider exists and only the selector matches nothing.
+  test "no_pacts_is_error applies when the broker returns no pacts", %{tmp_dir: dir} do
+    :ok = AnimalInteractions.write_consumer_pact(dir)
+    :ok = Broker.publish_pact(Path.join(dir, "animal_service_consumer-animal_service.json"), "1.0.#{System.unique_integer([:positive])}")
+    broker = [url: System.fetch_env!("PACT_BROKER_URL"), consumer_version_selectors: [%{"branch" => "no-such-branch"}]]
+
+    assert {:error, %PactEx.VerificationError{}} = Verifier.verify(provider: "animal_service", broker: broker)
+    assert :ok = Verifier.verify(provider: "animal_service", broker: broker, no_pacts_is_error: false)
   end
 end
 ```
