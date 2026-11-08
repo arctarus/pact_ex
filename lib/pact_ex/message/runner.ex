@@ -9,7 +9,7 @@ defmodule PactEx.Message.Runner do
   # follow only send what was planned.
 
   alias PactEx.Consumer.Apply
-  alias PactEx.{Error, Message, Native, Pact, Plugin, PluginContents}
+  alias PactEx.{Error, Message, Native, Pact, Plugin, PluginContents, Result}
   alias PactEx.Message.Reified
 
   @entry_point "PactEx.Message.run/4"
@@ -88,7 +88,7 @@ defmodule PactEx.Message.Runner do
   end
 
   defp plan_metadata(metadata) do
-    Apply.map_ok(metadata, fn
+    Result.map_ok(metadata, fn
       {key, value} when is_binary(key) ->
         with {:ok, json} <- Apply.plan_json(value, "metadata #{inspect(key)}", @entry_point) do
           {:ok, {key, json}}
@@ -126,7 +126,7 @@ defmodule PactEx.Message.Runner do
   # Metadata goes after the contents: `pactffi_interaction_contents` replaces
   # the metadata of an async message, so plugin contents would wipe it.
   defp metadata(handle, metadata) do
-    Apply.each_ok(metadata, fn {key, json} ->
+    Result.each_ok(metadata, fn {key, json} ->
       Apply.native(Native.with_metadata(handle, key, json, :request))
     end)
   end

@@ -90,7 +90,7 @@ defmodule PactEx.Consumer do
   """
 
   alias PactEx.Consumer.Apply
-  alias PactEx.{Error, MismatchError, MockServer, Native, Pact, Plugin}
+  alias PactEx.{Error, MismatchError, MockServer, Native, Pact, Plugin, Result}
   alias PactEx.HTTP.Interaction
 
   @entry_point "PactEx.Consumer.start_mock_server/3"
@@ -275,9 +275,9 @@ defmodule PactEx.Consumer do
 
   def verdict(false, mismatches), do: {:error, %MismatchError{mismatches: mismatches}}
 
-  defp validate_all(interactions), do: Apply.each_ok(interactions, &Apply.validate/1)
+  defp validate_all(interactions), do: Result.each_ok(interactions, &Apply.validate/1)
 
   defp apply_all(pact_ref, interactions) do
-    Apply.each_ok(interactions, &Apply.interaction(pact_ref, &1))
+    Result.each_ok(interactions, &Apply.interaction(pact_ref, &1))
   end
 end

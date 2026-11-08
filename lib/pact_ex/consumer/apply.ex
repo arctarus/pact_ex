@@ -53,7 +53,7 @@ defmodule PactEx.Consumer.Apply do
   # another media type is an error.
 
   alias PactEx.Consumer.BodyCheck
-  alias PactEx.{Error, HTTP, Native, Pact, PluginContents}
+  alias PactEx.{Error, HTTP, Native, Pact, PluginContents, Result}
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -459,7 +459,7 @@ defmodule PactEx.Consumer.Apply do
   # value is an error too: it would make no native call, so the parameter
   # would be dropped without a word.
   defp check_params(params, label, description) do
-    each_ok(params, fn
+    Result.each_ok(params, fn
       {name, []} ->
         {:error,
          invalid(
@@ -559,7 +559,7 @@ defmodule PactEx.Consumer.Apply do
   defp with_type(headers, _source, _type), do: headers
 
   defp provider_states(handle, states) do
-    each_ok(states, fn
+    Result.each_ok(states, fn
       {name, nil} ->
         native(Native.given(handle, name))
 
@@ -592,7 +592,7 @@ defmodule PactEx.Consumer.Apply do
   defp status(other), do: {:error, invalid("unsupported response status: #{inspect(other)}")}
 
   defp query(handle, query) do
-    each_ok(query, fn {name, values} -> query_parameter(handle, name, values) end)
+    Result.each_ok(query, fn {name, values} -> query_parameter(handle, name, values) end)
   end
 
   defp query_parameter(handle, name, values) do
@@ -604,7 +604,7 @@ defmodule PactEx.Consumer.Apply do
   end
 
   defp headers(handle, part, headers) do
-    each_ok(headers, fn {name, values} -> header(handle, part, name, values) end)
+    Result.each_ok(headers, fn {name, values} -> header(handle, part, name, values) end)
   end
 
   defp header(handle, part, name, values) do
@@ -635,7 +635,7 @@ defmodule PactEx.Consumer.Apply do
     values
     |> then(&if is_list(&1), do: &1, else: [&1])
     |> Enum.with_index()
-    |> each_ok(fn {value, index} ->
+    |> Result.each_ok(fn {value, index} ->
       with {:ok, encoded} <- param_value(value, label), do: fun.(index, encoded)
     end)
   end
@@ -649,7 +649,7 @@ defmodule PactEx.Consumer.Apply do
   # Turns header names into strings and writes any spelling of Content-Type
   # as "Content-Type". Returns a list of `{name, values}`.
   defp canonical_headers(headers, label) do
-    with {:ok, named} <- map_ok(headers, &named_header(&1, label)),
+    with {:ok, named} <- Result.map_ok(headers, &named_header(&1, label)),
          {:ok, named} <- unique_content_type(named, label) do
       unique_names(named, label)
     end
@@ -736,42 +736,12 @@ defmodule PactEx.Consumer.Apply do
   def native({:error, error}), do: {:error, Error.from_native(error)}
 
   @doc false
-  @spec each_ok(Enumerable.t(), (term() -> :ok | {:error, term()})) :: :ok | {:error, term()}
-  def each_ok(enumerable, fun) do
-    Enum.reduce_while(enumerable, :ok, fn item, :ok ->
-      case fun.(item) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-  end
-
-  @doc false
-  # Like `Enum.map/2`, for a function that returns `{:ok, value}` or
-  # `{:error, term}`. Stops at the first error.
-  @spec map_ok(Enumerable.t(), (term() -> {:ok, term()} | {:error, term()})) ::
-          {:ok, [term()]} | {:error, term()}
-  def map_ok(enumerable, fun) do
-    enumerable
-    |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
-      case fun.(item) do
-        {:ok, value} -> {:cont, {:ok, [value | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> {:ok, Enum.reverse(acc)}
-      error -> error
-    end
-  end
-
-  @doc false
   # Plans the provider states of a message, without any native call. Returns
   # `{name, params_json | nil}` pairs for `given_states/2`.
   @spec plan_states([{String.t(), map() | nil}], String.t()) ::
           {:ok, [{String.t(), String.t() | nil}]} | {:error, Error.t()}
   def plan_states(states, entry_point) do
-    map_ok(states, fn
+    Result.map_ok(states, fn
       {name, nil} ->
         {:ok, {name, nil}}
 
@@ -788,7 +758,7 @@ defmodule PactEx.Consumer.Apply do
   @spec given_states(reference(), [{String.t(), String.t() | nil}]) ::
           :ok | {:error, Error.t()}
   def given_states(handle, states) do
-    each_ok(states, fn
+    Result.each_ok(states, fn
       {name, nil} -> native(Native.given(handle, name))
       {name, json} -> native(Native.given_with_params(handle, name, json))
     end)

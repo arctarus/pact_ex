@@ -11,7 +11,7 @@ defmodule PactEx.Plugin do
   """
 
   alias PactEx.Consumer.Apply
-  alias PactEx.{Error, Native, Pact, PluginContents}
+  alias PactEx.{Error, Native, Pact, PluginContents, Result}
 
   @doc """
   Describes a body that a plugin builds.
@@ -36,7 +36,7 @@ defmodule PactEx.Plugin do
   # on `mock.pact_ref` would leak.
   @spec load_all(reference(), Pact.t()) :: :ok | {:error, Error.t()}
   def load_all(pact_ref, %Pact{plugins: plugins}) do
-    Apply.each_ok(plugins, fn {name, version} ->
+    Result.each_ok(plugins, fn {name, version} ->
       Apply.native(Native.using_plugin(pact_ref, name, version))
     end)
   end
