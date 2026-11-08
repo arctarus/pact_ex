@@ -70,6 +70,12 @@ defmodule PactEx.Consumer do
       them (nested maps, booleans, `nil` and keys that start with `"pact:"` are
       errors, because pact_ffi would drop them). A type that is both JSON and
       XML (`application/xml+json`) is JSON.
+    * PactEx does not check two things in these descriptions, because pact_ffi
+      accepts them. A matcher that pact_ffi cannot build, such as `regex`
+      without a `"regex"` key, becomes `null`, and a form body drops it
+      without a word. And a very large `"examples"` count in an XML element
+      makes `with_body` slow or run out of memory. Build matchers with
+      `PactEx.Matchers`, which always gives valid ones.
     * Every JSON PactEx writes is decoded again and an object that repeats a
       key is an error at any depth, for every content type. That covers
       `%{a: 1, "a" => 2}`, structs that encode to a repeated key, and matcher

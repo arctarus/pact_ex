@@ -498,6 +498,10 @@ start it:
 on_exit(fn -> PactEx.MockServer.stop(mock) end)
 ```
 
+Stop it there and nowhere else. `stop/1` stops by port, so a second call, such
+as one in the test body as well, can stop the server of another test that got
+the same port.
+
 ## Logging
 
 The native library keeps one logger for the whole OS process. Set it up once,

@@ -49,6 +49,10 @@ defmodule PactEx.MockServer do
 
   Returns `[]` when there are none, and for a server that was already stopped.
   See `PactEx.MismatchError` for the `"type"` values.
+
+  Each call makes pact_ffi build a new string that it frees only when the
+  server stops, so do not poll this in a loop. Check `matched?/1` first, as
+  `PactEx.Consumer.run/4` does, and read the mismatches once.
   """
   @spec mismatches(t()) :: [map()]
   def mismatches(%__MODULE__{port: port}) do
