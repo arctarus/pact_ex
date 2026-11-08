@@ -27,6 +27,9 @@ pact_erlang parity for `pact_verifier`, plus transports.
 - Free the strings returned by `pactffi_verifier_json` and `pactffi_verifier_output` (with `strip_ansi = 1`) with `pactffi_string_delete`.
 - If an external process is ever needed (Task 1 outcome), launch it with an Elixir `Port`. Never use C `fork`/`exec` from a NIF.
 - `plug` and `bandit` are `optional: true`. `PactEx.Verifier.verify/1` raises a clear error naming the missing dep only when `state_handler` or `message_providers` is given without them.
+  - An optional dep is not compiled into an app that does not list it, so `use Plug.Router` would break the compile of pact_ex itself there. Wrap `PactEx.Verifier.Endpoint` in `if Code.ensure_loaded?(Plug.Router) do ... end` and `PactEx.Verifier.EndpointServer` in `if Code.ensure_loaded?(Bandit) do ... end`.
+  - `verify/1` checks `Code.ensure_loaded?(PactEx.Verifier.EndpointServer)` at runtime and raises `ArgumentError` naming `:plug` and `:bandit` when it is false.
+  - Check it once by hand in a throwaway Mix project that depends on pact_ex by `path:` without plug and bandit: `mix compile` succeeds, and `verify/1` with `state_handler` raises that error.
 - Wire formats fixed by `pact_verifier` (`callback_executors.rs` and `messages.rs`):
   - The state change request is `POST` with a JSON body `{"state": String, "params": Object, "action": "setup" | "teardown"}`.
   - The message request is `POST` with a JSON body `{"description": String, "providerStates": [{"name": String, "params": Object}]}`.
@@ -281,7 +284,7 @@ end
 Run: `mix test test/pact_ex/verifier/endpoint_test.exs`
 Expected: FAIL with `module PactEx.Verifier.Endpoint is not available`.
 
-- [ ] **Step 3: Implement `Endpoint` and `EndpointServer`** as listed in Interfaces. Use `Plug.Router` with `Plug.Parsers` (`:json` with `json_decoder: JSON`).
+- [ ] **Step 3: Implement `Endpoint` and `EndpointServer`** as listed in Interfaces. Use `Plug.Router` with `Plug.Parsers` (`:json` with `json_decoder: JSON`). Wrap each module in its `Code.ensure_loaded?` guard (Global Constraints). Start Bandit with `plug: {Endpoint, opts}, ip: {127, 0, 0, 1}, port: 0, startup_log: false`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
