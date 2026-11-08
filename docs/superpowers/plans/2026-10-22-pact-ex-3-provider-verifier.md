@@ -519,7 +519,7 @@ git commit -m "feat: verify message providers through the internal endpoint"
 ### Task 5: Pact Broker source and publishing results
 
 **Files:**
-- Modify: `lib/pact_ex/verifier/options.ex`, `test/test_helper.exs` (exclude `:broker` unless `PACT_BROKER_URL` is set)
+- Modify: `lib/pact_ex/verifier/options.ex`, `test/test_helper.exs` (exclude `:broker` unless `PACT_BROKER_URL` is set; build the `exclude` list from both rules, so the `:plugin` rule stays)
 - Create: `test/support/broker.ex` (Req helpers `publish_pact(path, consumer_version)` and `matrix(consumer, version)`)
 - Test: `test/acceptance/broker_test.exs`, plus a validation test in `test/pact_ex/verifier_test.exs`
 
@@ -690,11 +690,15 @@ git commit -m "test: verify gRPC provider via plugin transport"
 ### Task 7: CI and docs for the verifier
 
 **Files:**
-- Modify: `.github/workflows/ci.yml`, `README.md`, `CHANGELOG.md`
+- Modify: `.github/workflows/ci.yml`, `README.md`, `ARCHITECTURE.md`, `CHANGELOG.md`
 
 - [ ] **Step 1: Update `ci.yml`**
 
-On `ubuntu-latest` only, add a `services.pact-broker` container (`pactfoundation/pact-broker`, port 9292, sqlite env from Global Constraints, health check on `/diagnostic/status/heartbeat`) and set `PACT_BROKER_URL=http://localhost:9292`.
+Run the broker tests on Linux only. Do not use `services:` in the `test` job: it is set for the whole job, so the `macos-latest` entries of the matrix would get it too, and service containers only run on Linux runners. Add two steps before `mix test` instead, both with `if: runner.os == 'Linux'`:
+- `docker compose -f test/support/docker-compose.yml up -d --wait`, which reuses the Task 1 compose file and its health check on `/diagnostic/status/heartbeat`;
+- `echo "PACT_BROKER_URL=http://localhost:9292" >> "$GITHUB_ENV"`.
+
+On macOS `PACT_BROKER_URL` stays unset, so `test_helper.exs` excludes `:broker`.
 
 - [ ] **Step 2: Update `README.md`**
 
@@ -704,15 +708,26 @@ Add a "Verifying a provider" section that covers:
 - broker sources and publishing
 - gRPC transports
 - the `plug`/`bandit` optional deps
+- what pact_verifier does that users will trip on:
+  - the state handler and the message providers run in Bandit's processes, not in the test process. Anything bound to the test process (the process dictionary, Mox expectations, an Ecto SQL sandbox checkout) needs a shared mode or an explicit allowance;
+  - a handler that fails gets a 422, so the verifier does not retry it, and the reason is in the `VerificationError` message;
+  - `no_pacts_is_error` covers every source (Review Focus 3), but a missing file or directory is always an error;
+  - a directory source reads only the files at its top level, not subdirectories, and a file in it that is not a pact is an error;
+  - each verification prints its output to the VM's stdout from native code, so `ExUnit.CaptureIO` does not capture it;
+  - when a verification that loaded plugins ends, every plugin process in the VM stops, so run plugin verifications in `async: false` modules.
 
-Complete the parity table.
+Complete the parity table, and change the "provider verifier is not here yet" note at the top and "Coming next".
 
-- [ ] **Step 3: Verify**
+- [ ] **Step 3: Update `ARCHITECTURE.md` and `CHANGELOG.md`**
+
+In `ARCHITECTURE.md`, rewrite the scope line at the top (it still says that messages and plugins are planned, though 0.2.0 shipped them) and replace "Provider workflow: Not implemented yet" with the flow of `verify/1`: options, endpoint, one native call, report, endpoint stop. Add the verify NIF to "Threading and Safety". Add an `Unreleased` section to `CHANGELOG.md`.
+
+- [ ] **Step 4: Verify**
 
 Run: `mix precommit && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)`
 Expected: all green.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add -A
