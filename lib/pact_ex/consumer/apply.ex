@@ -6,7 +6,9 @@ defmodule PactEx.Consumer.Apply do
   # Encoding rules:
   #   * binaries pass through, maps (matchers) are JSON-encoded, integers,
   #     floats and booleans are stringified (query and header values only);
-  #   * query and header names may be binaries or atoms;
+  #   * query and header names may be binaries or atoms. An atom header name is
+  #     dashed as Req does (`:x_request_id` is "x-request-id"), and two keys
+  #     that end up with the same name are rejected;
   #   * a list value becomes one native call per element, using its index;
   #   * a map or list body is JSON, a valid UTF-8 binary without NUL is text,
   #     any other binary is sent as binary;
@@ -31,7 +33,8 @@ defmodule PactEx.Consumer.Apply do
   #     rejected (see `check_content_type_header/3`): pact_ffi indexes its
   #     first element and aborts the VM when it is missing. An empty or
   #     whitespace-only element is rejected too, and so is a `[]` value for any
-  #     header or query parameter (it would write nothing);
+  #     header or query parameter (it would write nothing), whether it is the
+  #     whole value or an element at any position of a list;
   #   * with an XML or form type, a body that pact_ffi reads as a description
   #     is checked by `PactEx.Consumer.BodyCheck` before any native call:
   #     pact_ffi panics (and aborts the VM) on some descriptions.
@@ -654,8 +657,28 @@ defmodule PactEx.Consumer.Apply do
       end
     end)
     |> case do
-      {:ok, acc} -> unique_content_type(Enum.reverse(acc), label)
-      error -> error
+      {:ok, acc} ->
+        with {:ok, headers} <- unique_content_type(Enum.reverse(acc), label),
+             do: unique_names(headers, label)
+
+      error ->
+        error
+    end
+  end
+
+  # Two keys of a map can spell one name once atoms are dashed
+  # (`:x_request_id` and `"x-request-id"`). Each name is written from index 0,
+  # so the second would overwrite the first without a word.
+  defp unique_names(headers, label) do
+    names = Enum.map(headers, fn {name, _values} -> name end)
+
+    case Enum.uniq(names) do
+      ^names ->
+        {:ok, headers}
+
+      _ ->
+        name = Enum.find(names, &(Enum.count(names, fn other -> other == &1 end) > 1))
+        {:error, invalid("#{label}s contain the header #{inspect(name)} more than once")}
     end
   end
 
