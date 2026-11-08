@@ -6,8 +6,17 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 - [ ] Re-review plan 3 against the plan 1 code.
 
+## Important: from the plan 2 review, for 0.2.1
+
+- [ ] `SyncMessage` drops the request and the responses without a word when `plugin_contents` is set (`lib/pact_ex/sync_message/runner.ex:187`: `check_response_types/2` checks their types and then they are discarded). Everywhere else a lost value is a `-101`. Make `with_plugin_contents/2` together with `with_request/3` or `will_respond_with/3` return `-101`, and drop the `content_type` check of the responses, which has no effect. Do it soon: it turns a silent no-op into an error.
+- [ ] `scripts/install-protobuf-plugin.sh:64` checks the binary only against the `.sha256` of the same release. That protects against a corrupt download, not against changed release files, and the binary is what runs. Pin the binary hash for each OS and architecture (4 constants, from the digest GitHub reports for each asset), like `MANIFEST_SHA256`. Update them with every plugin version.
+- [ ] `already_cleaned_up` (`native/pact_ex_nif/src/plugins.rs:38`) uses code 2, which pact_ffi means as "Failed to load the plugin" for `pactffi_using_plugin`. Anyone who filters on `code` cannot tell them apart. Use another code, or delete the `plugins_cleaned` guard and its tests: the public API cannot reach it, because `pact_ref` is internal.
+
 ## Minor: code
 
+- [ ] Wrong comment in `native/pact_ex_nif/src/plugins.rs:64`: it says the driver starts the plugin "while pact_ffi holds its global `PACT_HANDLES`". In pact_ffi 0.5.12 (`plugins/mod.rs:84-94`) `load_plugin` runs in `RUNTIME.block_on` before `with_pact`, so that mutex is not held during the load (it is for `interaction_contents`). The lock that stays held is the plugin driver's `PLUGIN_REGISTER`, as the README and `ci.yml` say. Also note there that every `pactffi_using_plugin` sleeps 500 ms, so each plugin test pays that plus the process start.
+- [ ] `Text` in `native/pact_ex_nif/src/messages.rs:21` is not needed. rustler 0.38 encodes `Result<T, E>` as `{:ok, t} | {:error, e}` when both implement `Encoder`, and `FfiError` does. `message_reify` and `sync_message_generate_contents` can return `Result<String, FfiError>` (about 20 lines fewer, and the `error.clone()` goes). `Outcome` stays: it must encode `:ok` alone.
+- [ ] Plugins load before `with_specification` in `Consumer.build` (`consumer.ex:219`) and after it in both message runners. It makes no difference, but pick one order.
 - [ ] `pact_handle_write_file` code 2 says "is the directory writable?", but pact_ffi also returns 2 when it cannot merge with an existing pact file (`messages.rs:89`). Drop the hint or name both causes.
 - [ ] README `on_exit` advice: a second `MockServer.stop/1` stops by port, so if the port was reused it can stop another test's server. Say to use `on_exit` instead of stopping in the test body, or make `stop/1` check the pact handle.
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
