@@ -610,12 +610,21 @@ git commit -m "feat: verify from Pact Broker and publish verification results"
 ### Task 6: gRPC provider transport
 
 **Files:**
-- Create: `test/support/route_guide_server.ex` (a `GRPC.Server` implementing `GetFeature`)
+- Create: `test/support/route_guide_server.ex` (`RouteGuideServer` and `WrongRouteGuideServer`, two `GRPC.Server` modules implementing `GetFeature`), `test/support/grpc_interactions.ex`
+- Modify: `mix.exs` (`{:grpc_server, "~> 1.0", only: :test}`), `mix.lock`, `test/acceptance/grpc_consumer_test.exs` (use `GrpcInteractions`)
 - Test: `test/acceptance/grpc_provider_test.exs`
 
 **Interfaces:**
-- Consumes: Task 3 `verify/1` with `transports`, the plan 2 `Routeguide.*` test modules, and the plan 2 gRPC consumer interactions (extract the Task 5 `get_feature/1` builder into `test/support/grpc_interactions.ex` so both suites share it).
-- Produces: nothing new in lib. This task proves that `transports` works with a plugin transport.
+- Consumes: Task 3 `verify/1` with `transports`, the plan 2 `Routeguide.*` test modules, and the plan 2 gRPC consumer interactions. Extract the `get_feature/1` builder and the `call/2` client helper from `test/acceptance/grpc_consumer_test.exs` into `GrpcInteractions`, and make that test use them.
+- Produces:
+  - `GrpcInteractions.write_consumer_pact(dir) :: :ok` writes `grpcconsumer-grpcprovider.json` with the success and the `NOT_FOUND` interactions, through `SyncMessage.run/4` and a real gRPC client call, as the plan 2 test does. Give the two interactions different descriptions (for example `"Route guide - GetFeature"` and `"Route guide - GetFeature not found"`): a merge into the same pact file may replace an interaction that has the same description and states.
+  - Nothing new in lib. This task proves that `transports` works with a plugin transport.
+
+The server is not in the `grpc` package. Since grpc-elixir 1.0, `grpc` is the client only (its `lib/grpc` has `channel.ex`, `client/` and `stub.ex`), and the server is the separate `grpc_server` package (1.0.6 at the time of writing). `grpc_server` 1.0.6 needs `grpc_core ~> 1.0.6`, and `mix.lock` pins 1.0.5, so run `mix deps.update grpc grpc_core` after adding it. It also brings `cowboy` and `ranch`. If the resolution fails against `gun`'s `cowlib`, stop and report.
+
+`GRPC.Server.start(servers, port, opts)` returns `{:ok, pid, port}` and reads the bound port from ranch when `port` is 0. It is `@doc false` in 1.0.6, but it is the only call that returns the port picked for 0. `GRPC.Server.Supervisor` takes a fixed port. Pass `adapter_opts: [ip: {127, 0, 0, 1}]`. `GRPC.Server.stop(servers)` stops it.
+
+The verifier loads the plugins of the pact itself, and calls pact-plugin-driver's global `shutdown_plugins()` when it finishes (`pact_verifier` `lib.rs`). That stops every plugin process in the VM, including the ones a concurrent consumer test still uses. So this module is `async: false`, like every `:plugin` module.
 
 - [ ] **Step 1: Write the test**
 
@@ -624,31 +633,50 @@ git commit -m "feat: verify from Pact Broker and publish verification results"
 defmodule PactEx.Acceptance.GrpcProviderTest do
   use ExUnit.Case, async: false
 
+  alias PactEx.Verifier
+
+  # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
+  @moduletag timeout: 120_000
   @moduletag :plugin
+  @moduletag :capture_log
   @moduletag :tmp_dir
 
-  test "verifies the gRPC pact against an Elixir gRPC server", %{tmp_dir: dir} do
+  setup %{tmp_dir: dir} do
     :ok = GrpcInteractions.write_consumer_pact(dir)
-    {:ok, server_pid, port} = GRPC.Server.start(RouteGuideServer, 0)
+    %{dir: dir}
+  end
+
+  test "verifies the gRPC pact against an Elixir gRPC server", %{dir: dir} do
+    assert :ok = verify_against(RouteGuideServer, dir)
+  end
+
+  test "a server that breaks the contract fails verification", %{dir: dir} do
+    assert {:error, %PactEx.VerificationError{} = error} = verify_against(WrongRouteGuideServer, dir)
+    assert Exception.message(error) =~ "Route guide - GetFeature"
+  end
+
+  defp verify_against(server, dir) do
+    {:ok, _pid, port} = GRPC.Server.start(server, 0, adapter_opts: [ip: {127, 0, 0, 1}])
 
     try do
-      assert :ok =
-               PactEx.Verifier.verify(provider: "grpcprovider", provider_url: "http://127.0.0.1:#{port}",
-                 transports: [%{protocol: "grpc", port: port}], dirs: [dir])
+      Verifier.verify(provider: "grpcprovider", provider_url: "http://127.0.0.1:#{port}", transports: [%{protocol: "grpc", port: port}], dirs: [dir])
     after
-      GRPC.Server.stop(RouteGuideServer)
-      _ = server_pid
+      GRPC.Server.stop(server)
     end
   end
 end
 ```
 
-`RouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "Big Tree", location: point}` for `(180, 200)`, and raises `GRPC.RPCError.exception(status: :not_found, message: "no feature was found")` for `(-1, -1)`.
+Both servers `use GRPC.Server, service: Routeguide.RouteGuide.Service`, and each has a `@moduledoc` and a `@spec` on `get_feature/2` (Credo strict covers `test/`).
+- `RouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "Big Tree", location: point}` for `(180, 200)`, and raises `GRPC.RPCError, status: :not_found, message: "no feature was found"` for any other point.
+- `WrongRouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "", location: point}` for `(180, 200)`, which breaks `notEmpty('Big Tree')`, and raises the same `NOT_FOUND` for any other point.
+
+As in plan 2 Task 5, check the code `use GRPC.Server` generates with `MIX_ENV=test mix compile --warnings-as-errors` and `MIX_ENV=test mix dialyzer`. Nobody has run them on it. A Dialyzer warning that comes only from that macro-generated code: create `.dialyzer_ignore.exs` with an entry scoped to `test/support/route_guide_server.ex`, set `ignore_warnings: ".dialyzer_ignore.exs"` in the `dialyzer` config of `mix.exs`, and report it. Any other warning is a real finding: fix it.
 
 - [ ] **Step 2: Run it**
 
-Run: `mix test test/acceptance/grpc_provider_test.exs`
-Expected: PASS. The verifier loads the protobuf plugin automatically from the pact's `metadata.plugins`. If it fails because the plugin is not loaded, check that the plugin directory resolution matches plan 2 (`PACT_PLUGIN_DIR`).
+Run: `mix test test/acceptance/grpc_provider_test.exs test/acceptance/grpc_consumer_test.exs`, then `mix precommit`.
+Expected: PASS, and `mix precommit` green. The verifier loads the protobuf plugin from the pact's `metadata.plugins`. If it fails because the plugin is not loaded, check that the plugin directory resolution matches plan 2 (`PACT_PLUGIN_DIR`). In CI these run on Linux only, like every `:plugin` test (the macOS plugin hang, see `ci.yml`).
 
 - [ ] **Step 3: Commit**
 
