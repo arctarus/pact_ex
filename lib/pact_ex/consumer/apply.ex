@@ -649,21 +649,14 @@ defmodule PactEx.Consumer.Apply do
   # Turns header names into strings and writes any spelling of Content-Type
   # as "Content-Type". Returns a list of `{name, values}`.
   defp canonical_headers(headers, label) do
-    headers
-    |> Enum.reduce_while({:ok, []}, fn {name, values}, {:ok, acc} ->
-      case header_name(name, label) do
-        {:ok, name} -> {:cont, {:ok, [{canonical_name(name), values} | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, acc} ->
-        with {:ok, headers} <- unique_content_type(Enum.reverse(acc), label),
-             do: unique_names(headers, label)
-
-      error ->
-        error
+    with {:ok, named} <- map_ok(headers, &named_header(&1, label)),
+         {:ok, named} <- unique_content_type(named, label) do
+      unique_names(named, label)
     end
+  end
+
+  defp named_header({name, values}, label) do
+    with {:ok, name} <- header_name(name, label), do: {:ok, {canonical_name(name), values}}
   end
 
   # Two keys of a map can spell one name once atoms are dashed
