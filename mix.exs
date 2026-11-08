@@ -52,7 +52,7 @@ defmodule PactEx.MixProject do
   defp usage_rules do
     [
       file: "AGENTS.md",
-      usage_rules: [:usage_rules, :elixir, :otp]
+      usage_rules: [:usage_rules]
     ]
   end
 
