@@ -52,7 +52,7 @@ defmodule PactEx.Native.PluginsTest do
     pact = v4_pact()
     assert Native.cleanup_plugins(pact) == true
 
-    assert {:error, %{function: "pactffi_using_plugin", code: 2, message: message}} =
+    assert {:error, %{function: "pactffi_using_plugin", code: -103, message: message}} =
              Native.using_plugin(pact, "protobuf", "0.8.1")
 
     assert message =~ "already cleaned up"
