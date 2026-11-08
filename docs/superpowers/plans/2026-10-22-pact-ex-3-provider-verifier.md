@@ -26,7 +26,7 @@ pact_erlang parity for `pact_verifier`, plus transports.
 - `verify/1` NIF: `schedule = "DirtyIo"`, and the whole body inside `on_large_stack`. Always call `pactffi_verifier_shutdown`, even when a setup call fails.
 - Free the strings returned by `pactffi_verifier_json` and `pactffi_verifier_output` (with `strip_ansi = 1`) with `pactffi_string_delete`.
 - If an external process is ever needed (Task 1 outcome), launch it with an Elixir `Port`. Never use C `fork`/`exec` from a NIF.
-- `plug` and `bandit` are `optional: true`. `PactEx.Verifier.verify/1` raises a clear error naming the missing dep only when `state_handler` or `message_providers` is given without them.
+- `plug` and `bandit` are `optional: true`. `PactEx.Verifier.verify/1` raises a clear error naming the missing dep only when it needs the endpoint (`state_handler`, a non-empty `message_providers` or `fallback_message_provider`) and they are missing.
   - An optional dep is not compiled into an app that does not list it, so `use Plug.Router` would break the compile of pact_ex itself there. Wrap `PactEx.Verifier.Endpoint` in `if Code.ensure_loaded?(Plug.Router) do ... end` and `PactEx.Verifier.EndpointServer` in `if Code.ensure_loaded?(Bandit) do ... end`.
   - `verify/1` checks `Code.ensure_loaded?(PactEx.Verifier.EndpointServer)` at runtime and raises `ArgumentError` naming `:plug` and `:bandit` when it is false.
   - Check it once by hand in a throwaway Mix project that depends on pact_ex by `path:` without plug and bandit: `mix compile` succeeds, and `verify/1` with `state_handler` raises that error.
@@ -36,6 +36,7 @@ pact_erlang parity for `pact_verifier`, plus transports.
   - The message response body holds the contents with their `content-type`. Metadata goes in the `Pact-Message-Metadata` header as base64-encoded JSON.
   - A failed callback (state handler or message provider) answers 422, never 5xx. pact_verifier retries a 5xx state change for about 127 s (Review Focus 1).
 - Broker tests are tagged `:broker` and excluded unless `PACT_BROKER_URL` is set. Plugin tests keep plan 2's `:plugin` rule.
+- Every verification ends with pact-plugin-driver's `shutdown_plugins()` (`pact_verifier` `lib.rs`, unconditional), which kills every plugin process in the VM, HTTP-only verifications included. So a `verify/1` must never overlap a test that uses a plugin. In this repo every `:plugin` module is `async: false`, and ExUnit runs the `async: true` modules before the others, so the `async: true` verifier tests never overlap them. Keep it that way.
 - Test broker: `test/support/docker-compose.yml` runs `pactfoundation/pact-broker` on port 9292 with `PACT_BROKER_DATABASE_ADAPTER=sqlite` and `PACT_BROKER_DATABASE_NAME=/tmp/pact_broker.sqlite3`. Health check: `GET /diagnostic/status/heartbeat`, written as a compose `healthcheck:` block, because `docker compose up --wait` waits only for services that have one. Check which HTTP tool the image has (`wget` or `curl`) before writing the `test:` command.
 
 ## Review Focus
@@ -65,8 +66,6 @@ pact_erlang parity for `pact_verifier`, plus transports.
     - `app_version: String`
     - `provider_name: String`, `provider_scheme: String`, `provider_host: String`, `provider_port: i64` (0 = none), `provider_path: String`
     - `transports: Vec<TransportConfig { protocol: String, port: i64, path: Option<String>, scheme: Option<String> }>`
-
-    Ports are `i64` on purpose. Rustler decodes `u16` with a truncating cast, so `70000` would become `4464`. Convert each port with `args::port_arg`, which raises `ArgumentError` outside `0..=65535`, as the mock server NIFs do.
     - `filter_description: Option<String>`, `filter_state: Option<String>`, `filter_no_state: bool`
     - `state_change_url: Option<String>`, `state_change_teardown: bool`
     - `disable_ssl_verification: bool`, `request_timeout_ms: u64`
@@ -79,6 +78,8 @@ pact_erlang parity for `pact_verifier`, plus transports.
     - `no_pacts_is_error: bool`
 
     `consumer_version_selectors` entries are JSON strings.
+
+    Ports are `i64` on purpose. Rustler decodes `u16` with a truncating cast, so `70000` would become `4464`. Convert each port with `args::port_arg`, which raises `ArgumentError` outside `0..=65535`, as the mock server NIFs do.
 
 - [ ] **Step 1: Write the failing native test**
 
@@ -632,7 +633,7 @@ The server is not in the `grpc` package. Since grpc-elixir 1.0, `grpc` is the cl
 
 `GRPC.Server.start(servers, port, opts)` returns `{:ok, pid, port}` and reads the bound port from ranch when `port` is 0. It is `@doc false` in 1.0.6, but it is the only call that returns the port picked for 0. `GRPC.Server.Supervisor` takes a fixed port. Pass `adapter_opts: [ip: {127, 0, 0, 1}]`. `GRPC.Server.stop(servers)` stops it.
 
-The verifier loads the plugins of the pact itself, and calls pact-plugin-driver's global `shutdown_plugins()` when it finishes (`pact_verifier` `lib.rs`). That stops every plugin process in the VM, including the ones a concurrent consumer test still uses. So this module is `async: false`, like every `:plugin` module.
+The verifier loads the plugins of the pact itself, and kills every plugin process in the VM when it finishes (Global Constraints). So this module is `async: false`, like every `:plugin` module.
 
 - [ ] **Step 1: Write the test**
 
@@ -722,7 +723,7 @@ Add a "Verifying a provider" section that covers:
   - `no_pacts_is_error` covers every source (Review Focus 3), but a missing file or directory is always an error;
   - a directory source reads only the files at its top level, not subdirectories, and a file in it that is not a pact is an error;
   - each verification prints its output to the VM's stdout from native code, so `ExUnit.CaptureIO` does not capture it;
-  - when a verification that loaded plugins ends, every plugin process in the VM stops, so run plugin verifications in `async: false` modules.
+  - every verification, plugin or not, kills every plugin process in the VM when it ends. Never run `verify/1` at the same time as a consumer test that uses a plugin.
 
 Complete the parity table, and change the "provider verifier is not here yet" note at the top and "Coming next".
 
