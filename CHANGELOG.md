@@ -20,6 +20,8 @@
 - `scripts/install-protobuf-plugin.sh` installs the protobuf plugin 0.8.1 for
   CI and for a checkout of this repository. The tests that need a plugin are
   skipped when it is not installed.
+- Plugins are not tested on macOS in CI: the plugin driver sometimes hangs
+  there while it starts a plugin. See the README.
 - `PactEx.Consumer.run/4` returns `{:error, %PactEx.Error{code: -102}}` when
   the mock server reports a failed match without mismatch details, for
   example when it was already stopped. It used to return an empty

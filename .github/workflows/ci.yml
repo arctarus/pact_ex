@@ -57,12 +57,20 @@ jobs:
       # The :plugin tests and the ignored Rust test need the protobuf plugin.
       # Without it the :plugin tests are excluded and the ignored Rust test
       # cannot run, so CI would skip them without a word.
-      - run: scripts/install-protobuf-plugin.sh
+      #
+      # Linux only. On macOS the driver sometimes hangs for good while it
+      # starts a plugin: its gRPC client connects to `[::1]` first, without a
+      # timeout, and holds its global plugin lock meanwhile (pact-plugin-driver
+      # 1.2.6, `connect_channel`). One hung run stalls every later plugin test.
+      # macOS still builds and runs all the tests that need no plugin.
+      - if: runner.os == 'Linux'
+        run: scripts/install-protobuf-plugin.sh
 
       # Runs the Rust test of the exactly-once plugin cleanup against the real
       # plugin. It asserts that no plugin process runs when it starts, so it
       # must come before `mix test`.
-      - run: cargo test -- --ignored
+      - if: runner.os == 'Linux'
+        run: cargo test -- --ignored
         working-directory: native/pact_ex_nif
 
       # The test environment is the one `mix test` uses next, so the NIF is
@@ -86,9 +94,6 @@ jobs:
         env:
           HTTPS_PROXY: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost,::1
-          # Debugging the macOS plugin hang: the driver's trace log shows who
-          # holds its plugin lock. Uploaded below when the job fails.
-          PACT_EX_TRACE_LOG: ${{ matrix.os == 'macos-latest' && 'pact-trace.log' || '' }}
 
       # The protobuf plugin writes its own log files. When a job fails, they
       # show how far a hung or crashed plugin got. This step comes before the
@@ -98,9 +103,7 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: plugin-logs-${{ matrix.os }}-otp${{ matrix.beam.otp }}
-          path: |
-            ~/.pact/plugins/protobuf-0.8.1/log/
-            pact-trace.log
+          path: ~/.pact/plugins/protobuf-0.8.1/log/
           retention-days: 7
           if-no-files-found: ignore
 

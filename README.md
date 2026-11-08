@@ -580,7 +580,18 @@ precompiled NIF cannot load. Build from source there (`PACT_EX_BUILD=1`, see
 musl-based systems such as Alpine, not a fallback for old glibc.
 
 There is no Windows build. CI runs the tests on Linux and macOS with OTP 26,
-27 and 28.
+27 and 28. The tests that load a plugin run on Linux only: on macOS the plugin
+driver sometimes hangs while it starts a plugin (see
+[plugins on macOS](#plugins-on-macos)).
+
+## Plugins on macOS
+
+Plugins are not tested on macOS in CI. The plugin driver (pact-plugin-driver
+1.2.6) connects to a new plugin on `[::1]` first, with no timeout, and holds its
+global plugin lock meanwhile. On a macOS runner that connection sometimes
+neither succeeds nor fails, so the driver waits for good, and every later plugin
+load in the same VM waits behind it. Tests without plugins are not affected.
+If a load hangs on your Mac, plugin loading is the place to look.
 
 ## Coming from pact_erlang
 
