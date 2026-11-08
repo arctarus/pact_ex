@@ -116,18 +116,7 @@ defmodule PactEx.PluginContentsTest do
 
   describe "load_all/2 and cleanup/1" do
     setup do
-      previous = System.get_env("PACT_PLUGIN_DIR")
-
-      missing =
-        Path.join(System.tmp_dir!(), "pact_ex_no_plugins_#{System.unique_integer([:positive])}")
-
-      System.put_env("PACT_PLUGIN_DIR", missing)
-
-      on_exit(fn ->
-        if previous,
-          do: System.put_env("PACT_PLUGIN_DIR", previous),
-          else: System.delete_env("PACT_PLUGIN_DIR")
-      end)
+      PactEx.MissingPluginDir.set()
     end
 
     test "load_all/2 with no plugins is :ok" do

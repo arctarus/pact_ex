@@ -75,6 +75,7 @@
           #
           {Credo.Check.Design.AliasUsage,
            [priority: :low, if_nested_deeper_than: 2, if_called_more_often_than: 0]},
+          {Credo.Check.Design.DuplicatedCode, []},
           {Credo.Check.Design.TagFIXME, []},
           # You can also customize the exit_status of each check.
           # If you don't want TODO comments to cause `mix credo` to fail, just
@@ -185,7 +186,6 @@
           #
           {Credo.Check.Consistency.MultiAliasImportRequireUse, []},
           {Credo.Check.Consistency.UnusedVariableNames, []},
-          {Credo.Check.Design.DuplicatedCode, []},
           {Credo.Check.Readability.AliasAs, []},
           {Credo.Check.Readability.BlockPipe, []},
           {Credo.Check.Readability.ImplTrue, []},

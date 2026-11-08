@@ -6,25 +6,14 @@ defmodule PactEx.Native.SchedulerTest do
   @calls 3_000
   @threshold_us 5_000
 
-  # The time that the scheduler threads of `type` have spent out of sleep.
-  defp busy(type) do
-    :microstate_accounting
-    |> :erlang.statistics()
-    |> Enum.filter(&(&1.type == type))
-    |> Enum.map(fn %{counters: counters} ->
-      counters |> Map.values() |> Enum.sum() |> Kernel.-(counters.sleep)
-    end)
-    |> Enum.sum()
-  end
-
   # Runs `fun` with microstate accounting on and returns the busy time it
   # added to the dirty IO schedulers, in perf_counter units.
   defp dirty_io_busy_during(fun) do
     previous = :erlang.system_flag(:microstate_accounting, true)
     on_exit(fn -> :erlang.system_flag(:microstate_accounting, previous) end)
-    before = busy(:dirty_io_scheduler)
+    before = PactEx.SchedulerStats.busy(:dirty_io_scheduler)
     fun.()
-    busy(:dirty_io_scheduler) - before
+    PactEx.SchedulerStats.busy(:dirty_io_scheduler) - before
   end
 
   test "the builder NIFs run on dirty IO schedulers" do
