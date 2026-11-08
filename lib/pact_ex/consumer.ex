@@ -216,8 +216,10 @@ defmodule PactEx.Consumer do
   end
 
   defp build(pact, pact_ref, interactions, host, port) do
-    with :ok <- Plugin.load_all(pact_ref, pact),
-         :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
+    # The specification comes first, as in the message runners, so that nothing
+    # starts a plugin process before the pact is set up.
+    with :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
+         :ok <- Plugin.load_all(pact_ref, pact),
          :ok <- apply_all(pact_ref, interactions),
          {:ok, bound_port} <-
            Apply.native(Native.create_mock_server(pact_ref, host, port, "http", nil)) do
