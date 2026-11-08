@@ -2,15 +2,20 @@
 # Installs the Pact protobuf plugin under
 # ${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-$VERSION.
 # Does nothing when it is already installed. Every download is checked against
-# a SHA-256 before anything is installed. The binary is checked against the
-# `.sha256` file published with the release. The release has no such file for
-# pact-plugin.json, so its hash is pinned here (it matches the digest GitHub
-# reports for the v-0.8.1 asset).
+# a SHA-256 pinned in this file before anything is installed. They match the
+# digests GitHub reports for the v-0.8.1 release assets. Pinning them protects
+# against release files that change after the fact, which a `.sha256` file
+# published next to the binary would not. Update all five with every plugin
+# version.
 set -euo pipefail
 
 VERSION=0.8.1
 DIR="${PACT_PLUGIN_DIR:-$HOME/.pact/plugins}/protobuf-$VERSION"
 MANIFEST_SHA256=ef99f043a98942018046800e7a3f1d344365bcddd406200b26130a3fb4ad91c4
+BINARY_SHA256_LINUX_X86_64=d0fc6b3d99b17995ed5bf024f03f51790f332741c7acf745b97619dd4ee43fe0
+BINARY_SHA256_LINUX_AARCH64=c9387916e75e8815dc56d3b47fbb05d6de9fd757abce853f90a240bc5ae1b896
+BINARY_SHA256_MACOS_X86_64=5af6b4a35f058f358f9fe9da34dcf2d60337bc80dd58f3bdebae2dab672d32d1
+BINARY_SHA256_MACOS_AARCH64=de8197cb7e6f5d79e7a8850fb54b3bf42913ac1537f9a64adfcd5e69785f3fd3
 BASE_URL="https://github.com/pactflow/pact-protobuf-plugin/releases/download/v-$VERSION"
 
 if [ -f "$DIR/pact-plugin.json" ]; then
@@ -60,8 +65,13 @@ curl -fsSL -o "$tmp/$manifest" "$BASE_URL/$manifest"
 verify "$tmp/$manifest" "$MANIFEST_SHA256"
 
 curl -fsSL -o "$tmp/$binary" "$BASE_URL/$binary"
-curl -fsSL -o "$tmp/$binary.sha256" "$BASE_URL/$binary.sha256"
-verify "$tmp/$binary" "$(cut -d ' ' -f 1 <"$tmp/$binary.sha256" | head -n 1)"
+case "$os-$arch" in
+  linux-x86_64) binary_sha256=$BINARY_SHA256_LINUX_X86_64 ;;
+  linux-aarch64) binary_sha256=$BINARY_SHA256_LINUX_AARCH64 ;;
+  macos-x86_64) binary_sha256=$BINARY_SHA256_MACOS_X86_64 ;;
+  macos-aarch64) binary_sha256=$BINARY_SHA256_MACOS_AARCH64 ;;
+esac
+verify "$tmp/$binary" "$binary_sha256"
 
 # The early exit above and `PactEx.Plugin.installed?/2` both look for
 # pact-plugin.json, so it goes in last. An interrupted run then leaves no
