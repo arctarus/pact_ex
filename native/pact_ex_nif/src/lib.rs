@@ -6,7 +6,9 @@ mod error;
 mod handles;
 mod http;
 mod logger;
+mod messages;
 mod mock_server;
+mod plugins;
 mod stack;
 
 #[rustler::nif]

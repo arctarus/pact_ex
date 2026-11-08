@@ -84,8 +84,11 @@ defmodule PactEx.Consumer do
   """
 
   alias PactEx.Consumer.Apply
-  alias PactEx.{Error, MismatchError, MockServer, Native, Pact}
+  alias PactEx.{Error, MismatchError, MockServer, Native, Pact, Plugin}
   alias PactEx.HTTP.Interaction
+
+  @entry_point "PactEx.Consumer.start_mock_server/3"
+  @run_entry_point "PactEx.Consumer.run/4"
 
   @doc """
   Runs `fun` against a mock server for `interactions` and writes the pact if
@@ -121,7 +124,7 @@ defmodule PactEx.Consumer do
         # so `stop/1` must run after everything else.
         try do
           fun.(mock)
-          finish(mock)
+          finish(mock, @run_entry_point)
         after
           MockServer.stop(mock)
         end
@@ -149,6 +152,14 @@ defmodule PactEx.Consumer do
   Use this when `run/4` is too rigid. You must call `PactEx.MockServer.stop/1`
   when done, and `PactEx.MockServer.write_pact/2` if you want the pact file.
 
+  The plugins of the pact (see `PactEx.using_plugin/3`) are loaded first, in
+  order. They stay loaded until `PactEx.MockServer.stop/1`. When this function
+  returns an error or raises, they are already unloaded. An interaction with
+  plugin contents (`PactEx.Plugin.contents/2`) needs at least one plugin in the
+  pact and a pact with spec `:v4`, or this function returns a `-101` error
+  before any native call. A plugin that is not on disk is installed by the
+  plugin driver, which needs network access.
+
   ## Options
 
     * `:host` - address to bind. Defaults to `"127.0.0.1"`.
@@ -156,8 +167,9 @@ defmodule PactEx.Consumer do
       OS pick a free port.
 
   Returns `{:error, %PactEx.Error{}}` if an interaction is invalid (for
-  example, it has no request or a value of an unsupported type), if an argument contains a NUL byte, or if the
-  server cannot bind. A missing response defaults to status 200.
+  example, it has no request or a value of an unsupported type), if an argument
+  contains a NUL byte, if a plugin cannot be loaded, or if the server cannot
+  bind. A missing response defaults to status 200.
 
   Raises `ArgumentError` on unknown options, a port out of range, or a NUL
   byte in the consumer, provider or an interaction description.
@@ -169,33 +181,68 @@ defmodule PactEx.Consumer do
     host = Keyword.fetch!(opts, :host)
     port = Keyword.fetch!(opts, :port)
 
-    with :ok <- validate_all(interactions) do
+    plugin_contents? = Enum.any?(interactions, &Apply.plugin_contents?/1)
+
+    with :ok <- validate_all(interactions),
+         :ok <-
+           Apply.check_plugins_declared(
+             plugin_contents?,
+             pact.plugins,
+             @entry_point,
+             "an interaction"
+           ),
+         :ok <- Apply.check_plugins_unique(pact.plugins, @entry_point),
+         :ok <- Apply.check_plugin_spec(plugin_contents?, pact.spec, @entry_point) do
       pact_ref = Native.new_pact(pact.consumer, pact.provider)
 
-      with :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
-           :ok <- apply_all(pact_ref, interactions),
-           {:ok, bound_port} <-
-             Apply.native(Native.create_mock_server(pact_ref, host, port, "http", nil)) do
-        {:ok,
-         %MockServer{
-           port: bound_port,
-           url: MockServer.build_url(host, bound_port),
-           pact_dir: pact.pact_dir,
-           pact_ref: pact_ref
-         }}
+      # Once the pact exists, every way out except `{:ok, mock}` unloads the
+      # plugins. `MockServer.stop/1` does it for the `{:ok, mock}` case.
+      try do
+        build(pact, pact_ref, interactions, host, port)
+      catch
+        kind, reason ->
+          stacktrace = __STACKTRACE__
+          Plugin.cleanup(pact_ref)
+          :erlang.raise(kind, reason, stacktrace)
       else
-        {:error, %Error{}} = error -> error
+        {:ok, _mock} = ok ->
+          ok
+
+        {:error, %Error{}} = error ->
+          Plugin.cleanup(pact_ref)
+          error
       end
     end
   end
 
-  defp finish(mock) do
+  defp build(pact, pact_ref, interactions, host, port) do
+    with :ok <- Plugin.load_all(pact_ref, pact),
+         :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
+         :ok <- apply_all(pact_ref, interactions),
+         {:ok, bound_port} <-
+           Apply.native(Native.create_mock_server(pact_ref, host, port, "http", nil)) do
+      {:ok,
+       %MockServer{
+         port: bound_port,
+         url: MockServer.build_url(host, bound_port),
+         pact_dir: pact.pact_dir,
+         pact_ref: pact_ref
+       }}
+    end
+  end
+
+  # Checks the mock server and writes the pact if everything matched. A `-102`
+  # error names `entry_point`. Shared with `PactEx.SyncMessage.run/4`.
+  @doc false
+  @spec finish(MockServer.t(), String.t()) :: :ok | {:error, MismatchError.t() | Error.t()}
+  def finish(mock, entry_point) do
     matched? = MockServer.matched?(mock)
     mismatches = if matched?, do: [], else: MockServer.mismatches(mock)
 
     case verdict(matched?, mismatches) do
       :match -> MockServer.write_pact(mock, overwrite: false)
-      {:error, _error} = error -> error
+      {:error, %Error{} = error} -> {:error, %{error | function: entry_point}}
+      {:error, %MismatchError{}} = error -> error
     end
   end
 
@@ -209,7 +256,7 @@ defmodule PactEx.Consumer do
   def verdict(false, []) do
     {:error,
      %Error{
-       function: "PactEx.Consumer.run/4",
+       function: @run_entry_point,
        code: -102,
        message:
          "the mock server reported a failed match without mismatch details, for example " <>

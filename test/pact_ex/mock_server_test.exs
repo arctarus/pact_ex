@@ -40,6 +40,14 @@ defmodule PactEx.MockServerTest do
     end
   end
 
+  describe "build_address/2" do
+    test "joins host and port, with an IPv6 host in brackets" do
+      assert MockServer.build_address("127.0.0.1", 1234) == "127.0.0.1:1234"
+      assert MockServer.build_address("::1", 1234) == "[::1]:1234"
+      assert MockServer.build_address("[::1]", 1234) == "[::1]:1234"
+    end
+  end
+
   test "matched?/1 and mismatches/1 follow the traffic", %{mock: mock} do
     refute MockServer.matched?(mock)
 

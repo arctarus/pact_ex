@@ -46,4 +46,21 @@ defmodule PactEx.Native.SchedulerTest do
     dirty_us = :erlang.convert_time_unit(dirty, :perf_counter, :microsecond)
     assert dirty_us > @threshold_us
   end
+
+  test "the message builder NIFs run on dirty IO schedulers" do
+    pact = Native.new_pact("scheduler-consumer", "scheduler-provider")
+    :ok = Native.with_specification(pact, :v4)
+
+    dirty =
+      dirty_io_busy_during(fn ->
+        for _ <- 1..@calls do
+          message = Native.new_message_interaction(pact, "async")
+          _sync = Native.new_sync_message_interaction(pact, "sync")
+          :ok = Native.with_metadata(message, "queue", "\"weather\"", :request)
+        end
+      end)
+
+    dirty_us = :erlang.convert_time_unit(dirty, :perf_counter, :microsecond)
+    assert dirty_us > @threshold_us
+  end
 end

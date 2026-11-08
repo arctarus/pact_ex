@@ -42,9 +42,15 @@ defmodule PactEx.Consumer.Apply do
   # the same body rules, with the caller's label and entry point in errors.
   # `plan_json/3` does the same for JSON that is not a body (provider state
   # params, message metadata).
+  #
+  # A `PluginContents` body is planned as `{:plugin, content_type, json}`, with
+  # `json` encoded under the same rules as a map body. It is applied last, with
+  # `Native.interaction_contents/4`, after the other headers. Its own content
+  # type wins: an explicit `:content_type` or a Content-Type header that names
+  # another media type is an error.
 
   alias PactEx.Consumer.BodyCheck
-  alias PactEx.{Error, HTTP, Native}
+  alias PactEx.{Error, HTTP, Native, Pact, PluginContents}
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -129,6 +135,78 @@ defmodule PactEx.Consumer.Apply do
 
   defp with_entry_point(other, _entry_point), do: other
 
+  @doc false
+  @spec plugin_contents?(Interaction.t()) :: boolean()
+  def plugin_contents?(%Interaction{request: request, response: response}) do
+    match?(%{body: %PluginContents{}}, request) or match?(%{body: %PluginContents{}}, response)
+  end
+
+  @doc false
+  # `subject` names what has the plugin contents, as in "the message".
+  @spec check_plugins_declared(
+          boolean(),
+          [{String.t(), String.t() | nil}],
+          String.t(),
+          String.t()
+        ) :: :ok | {:error, Error.t()}
+  def check_plugins_declared(true, [], entry_point, subject) do
+    {:error,
+     %{
+       invalid(
+         "#{subject} has plugin contents (PactEx.Plugin.contents/2), but the pact has " <>
+           "no plugin. Add the plugin that handles it with PactEx.using_plugin/3."
+       )
+       | function: entry_point
+     }}
+  end
+
+  def check_plugins_declared(_plugin_contents?, _plugins, _entry_point, _subject), do: :ok
+
+  @doc false
+  # Plugin contents need a V4 pact: with an older spec pact_ffi writes the raw
+  # bytes and no `metadata.plugins`, so a provider cannot verify the pact.
+  @spec check_plugin_spec(boolean(), Pact.spec(), String.t()) :: :ok | {:error, Error.t()}
+  def check_plugin_spec(true, spec, entry_point) when spec != :v4 do
+    {:error,
+     %{
+       invalid(
+         "an interaction has plugin contents (PactEx.Plugin.contents/2), but the pact has " <>
+           "spec #{inspect(spec)}. Plugin contents need a V4 pact (spec: :v4): an older " <>
+           "pact would not record the plugin, and a provider could not verify it."
+       )
+       | function: entry_point
+     }}
+  end
+
+  def check_plugin_spec(_plugin_contents?, _spec, _entry_point), do: :ok
+
+  @doc false
+  # `PactEx.using_plugin/3` already refuses a repeated name, but a `%Pact{}` can
+  # be built by hand. Every load adds one use of the plugin, and pact_ffi's
+  # cleanup removes one use per unique name, so a repeated name would leave
+  # the plugin process running for ever.
+  @spec check_plugins_unique([{String.t(), String.t() | nil}], String.t()) ::
+          :ok | {:error, Error.t()}
+  def check_plugins_unique(plugins, entry_point) do
+    names = Enum.map(plugins, &elem(&1, 0))
+
+    case Enum.uniq(names -- Enum.uniq(names)) do
+      [] ->
+        :ok
+
+      repeated ->
+        {:error,
+         %{
+           invalid(
+             "the pact uses the plugin #{Enum.map_join(repeated, ", ", &inspect/1)} more " <>
+               "than once. Declare each plugin once with PactEx.using_plugin/3: a plugin " <>
+               "loaded twice would never exit."
+           )
+           | function: entry_point
+         }}
+    end
+  end
+
   # -- Plan: headers and body of each part, decided before any native call ----
 
   defp plan(%Interaction{description: description} = interaction) do
@@ -150,6 +228,16 @@ defmodule PactEx.Consumer.Apply do
     end
   end
 
+  defp plan_part_body(part, description, %{body: %PluginContents{} = body} = struct, headers) do
+    label = "#{part} body of interaction #{inspect(description)}"
+    candidates = [struct.content_type, header_candidate(headers)]
+
+    with :ok <- check_plugin_type(body, candidates, label),
+         {:ok, json, _decoded} <- encode_decoded(body.contents, label) do
+      {:ok, %{headers: headers, body: {:plugin, body.content_type, json}}}
+    end
+  end
+
   defp plan_part_body(part, description, %{body: body} = struct, headers) do
     if supported_body?(body) do
       label = "#{part} body of interaction #{inspect(description)}"
@@ -162,6 +250,46 @@ defmodule PactEx.Consumer.Apply do
       {:error,
        invalid("unsupported #{part} body: #{inspect(body)}, expected a binary, map or list")}
     end
+  end
+
+  @doc false
+  # Checks `content_type`, the explicit type given next to plugin contents (for
+  # example a message's `:content_type` option), against the type of the
+  # contents. Same rule as for an HTTP part: case and parameters do not count.
+  @spec check_plugin_content_type(PluginContents.t(), String.t() | nil, String.t(), String.t()) ::
+          :ok | {:error, Error.t()}
+  def check_plugin_content_type(%PluginContents{} = contents, content_type, label, entry_point) do
+    contents
+    |> check_plugin_type([content_type], label)
+    |> with_entry_point(entry_point)
+  end
+
+  # The content type of plugin contents wins. Another explicit type or header
+  # that names a different media type would be ignored without a word, so it is
+  # an error. Parameters (`; charset=...`) and case do not count.
+  defp check_plugin_type(%PluginContents{content_type: type}, candidates, label)
+       when is_binary(type) do
+    case Enum.find(candidates, &(is_binary(&1) and media_type(&1) != media_type(type))) do
+      nil ->
+        :ok
+
+      other ->
+        {:error,
+         invalid(
+           "#{label} is plugin contents of type #{inspect(type)}, but the part also " <>
+             "names the content type #{inspect(other)}. The plugin contents set the content " <>
+             "type, so leave the other one out or make them the same."
+         )}
+    end
+  end
+
+  defp check_plugin_type(%PluginContents{content_type: type}, _candidates, label) do
+    {:error,
+     invalid("#{label} has plugin contents with content type #{inspect(type)}, expected a string")}
+  end
+
+  defp media_type(type) do
+    type |> String.split(";", parts: 2) |> hd() |> String.trim() |> String.downcase()
   end
 
   # The body rules, shared by HTTP parts and `plan_body/4`. `candidates` are the
@@ -553,6 +681,9 @@ defmodule PactEx.Consumer.Apply do
   defp body(handle, part, {:binary, type, binary}),
     do: native(Native.with_binary_body(handle, part, type, binary))
 
+  defp body(handle, part, {:plugin, type, json}),
+    do: native(Native.interaction_contents(handle, part, type, json))
+
   defp value(value, _label) when is_binary(value), do: {:ok, value}
   defp value(value, label) when is_map(value), do: encode_json(value, label)
 
@@ -579,7 +710,11 @@ defmodule PactEx.Consumer.Apply do
   end
 
   @doc false
-  @spec native(:ok | {:ok, term()} | {:error, map()}) :: :ok | {:ok, term()} | {:error, Error.t()}
+  # One spec per shape, so a caller that passes `:ok | {:error, _}` gets
+  # `:ok | {:error, _}` back, never `{:ok, _}`.
+  @spec native(:ok) :: :ok
+  @spec native({:ok, term()}) :: {:ok, term()}
+  @spec native({:error, map()}) :: {:error, Error.t()}
   def native(:ok), do: :ok
   def native({:ok, _} = ok), do: ok
   def native({:error, error}), do: {:error, Error.from_native(error)}
@@ -595,7 +730,59 @@ defmodule PactEx.Consumer.Apply do
     end)
   end
 
-  defp invalid(message) do
-    %Error{function: @entry_point, code: @invalid_code, message: message}
+  @doc false
+  # Like `Enum.map/2`, for a function that returns `{:ok, value}` or
+  # `{:error, term}`. Stops at the first error.
+  @spec map_ok(Enumerable.t(), (term() -> {:ok, term()} | {:error, term()})) ::
+          {:ok, [term()]} | {:error, term()}
+  def map_ok(enumerable, fun) do
+    enumerable
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
+      case fun.(item) do
+        {:ok, value} -> {:cont, {:ok, [value | acc]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      error -> error
+    end
   end
+
+  @doc false
+  # Plans the provider states of a message, without any native call. Returns
+  # `{name, params_json | nil}` pairs for `given_states/2`.
+  @spec plan_states([{String.t(), map() | nil}], String.t()) ::
+          {:ok, [{String.t(), String.t() | nil}]} | {:error, Error.t()}
+  def plan_states(states, entry_point) do
+    map_ok(states, fn
+      {name, nil} ->
+        {:ok, {name, nil}}
+
+      {name, params} ->
+        with {:ok, json} <-
+               plan_json(params, "params of provider state #{inspect(name)}", entry_point) do
+          {:ok, {name, json}}
+        end
+    end)
+  end
+
+  @doc false
+  # Applies the states of `plan_states/2` to an interaction handle.
+  @spec given_states(reference(), [{String.t(), String.t() | nil}]) ::
+          :ok | {:error, Error.t()}
+  def given_states(handle, states) do
+    each_ok(states, fn
+      {name, nil} -> native(Native.given(handle, name))
+      {name, json} -> native(Native.given_with_params(handle, name, json))
+    end)
+  end
+
+  @doc false
+  @spec invalid(String.t(), String.t()) :: Error.t()
+  def invalid(message, entry_point) do
+    %Error{function: entry_point, code: @invalid_code, message: message}
+  end
+
+  defp invalid(message), do: invalid(message, @entry_point)
 end

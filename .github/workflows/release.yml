@@ -37,7 +37,8 @@ jobs:
       matrix:
         nif: ["2.16", "2.17"]
         job:
-          - { target: aarch64-apple-darwin, os: macos-14 }
+          # macos-14 is retired too: GitHub no longer accepts the label.
+          - { target: aarch64-apple-darwin, os: macos-15 }
           # macos-13 is retired. macos-15-intel is its replacement for x86_64.
           - { target: x86_64-apple-darwin, os: macos-15-intel }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
