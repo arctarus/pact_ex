@@ -342,7 +342,12 @@ git commit -m "feat: add internal endpoint for provider states and message provi
 - `POST /animals`: 201.
 - `GET /animals?type=`: 200 `{"animals": [...]}`.
 
-`AnimalProvider.start() :: {:ok, %{port: p, store: agent}}` serves it with Bandit on port 0.
+Every JSON response has `Content-Type: application/json`. `AnimalProvider.start() :: {:ok, %{port: p, store: agent}}` serves it with Bandit on port 0. The store starts empty.
+
+`AnimalProvider.state_handler(provider)` returns the handler for the plan 1 states, shared by Tasks 3 and 5. The pact has three interactions with a state, and each one needs its animal in the store:
+- `"an alligator with the name Mary exists"` (Mary, and the alligator search) puts `%{"name" => "Mary", "type" => "alligator"}`.
+- `"a dog with the name Duke exists"` puts `%{"name" => "Duke", "type" => "Dog"}`.
+- Any other state or action returns `:ok`.
 
 ```elixir
 # test/acceptance/http_provider_test.exs
@@ -362,12 +367,9 @@ defmodule PactEx.Acceptance.HttpProviderTest do
   end
 
   test "verifies the animal pact with a state handler", %{dir: dir, provider: p} do
-    handler = fn
-      "an alligator with the name Mary exists", _params, :setup -> AnimalProvider.put(p, %{"name" => "Mary", "type" => "alligator"})
-      _state, _params, _action -> :ok
-    end
-
-    assert :ok = Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir], state_handler: handler)
+    assert :ok =
+             Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir],
+               state_handler: AnimalProvider.state_handler(p))
   end
 
   # A 5xx would be retried for about 127 s per state call. The 422 fails at once.
@@ -556,13 +558,8 @@ defmodule PactEx.Acceptance.BrokerTest do
     {:ok, p} = AnimalProvider.start()
 
     try do
-      handler = fn
-        "an alligator with the name Mary exists", _, :setup -> AnimalProvider.put(p, %{"name" => "Mary", "type" => "alligator"})
-        _, _, _ -> :ok
-      end
-
       assert :ok =
-               Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", state_handler: handler,
+               Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", state_handler: AnimalProvider.state_handler(p),
                  broker: [url: System.fetch_env!("PACT_BROKER_URL"), consumer_version_selectors: [%{"latest" => true}]],
                  publish: true, provider_version: "2.0.0", provider_branch: "main")
 
