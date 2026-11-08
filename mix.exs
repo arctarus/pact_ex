@@ -22,6 +22,7 @@ defmodule PactEx.MixProject do
         plt_core_path: "priv/plts/core",
         flags: [:error_handling, :unmatched_returns, :extra_return, :missing_return]
       ],
+      usage_rules: usage_rules(),
       source_url: @source_url,
       docs: [
         main: "readme",
@@ -47,17 +48,27 @@ defmodule PactEx.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_env), do: ["lib"]
 
+  # `mix usage_rules.sync` writes AGENTS.md from these.
+  defp usage_rules do
+    [
+      file: "AGENTS.md",
+      usage_rules: [:usage_rules]
+    ]
+  end
+
   defp deps do
     [
       {:rustler_precompiled, "~> 0.10"},
       {:rustler, "~> 0.38", optional: true},
-      {:req, "~> 0.5", only: :test},
+      {:req, "~> 0.5", only: [:dev, :test]},
       {:grpc, "~> 1.0", only: :test},
       {:protobuf, "~> 0.17", only: :test},
-      {:mint, "~> 1.9", only: :test},
+      {:mint, "~> 1.9", only: [:dev, :test]},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:igniter, "~> 0.8", only: [:dev, :test], runtime: false},
+      {:usage_rules, "~> 1.3", only: [:dev], runtime: false}
     ]
   end
 
