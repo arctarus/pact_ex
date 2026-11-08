@@ -9,10 +9,15 @@ defmodule PactEx.MissingPluginDir do
   """
 
   @doc """
-  Sets the variable and restores it with `ExUnit.Callbacks.on_exit/1`. Call it
-  from `setup`, in a module with `async: false`: the environment is global.
+  Sets the variable and returns a function that restores it. Call it from
+  `setup`, in a module with `async: false` (the environment is global), and
+  pass the result to `on_exit/1`:
+
+      setup do
+        on_exit(PactEx.MissingPluginDir.set())
+      end
   """
-  @spec set() :: :ok
+  @spec set() :: (-> :ok)
   def set do
     previous = System.get_env("PACT_PLUGIN_DIR")
 
@@ -21,10 +26,10 @@ defmodule PactEx.MissingPluginDir do
 
     System.put_env("PACT_PLUGIN_DIR", missing)
 
-    ExUnit.Callbacks.on_exit(fn ->
+    fn ->
       if previous,
         do: System.put_env("PACT_PLUGIN_DIR", previous),
         else: System.delete_env("PACT_PLUGIN_DIR")
-    end)
+    end
   end
 end

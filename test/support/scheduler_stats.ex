@@ -7,7 +7,7 @@ defmodule PactEx.SchedulerStats do
   The time that the scheduler threads of `type` have spent out of sleep, in
   perf_counter units. Turn on `:microstate_accounting` first.
   """
-  @spec busy(atom()) :: non_neg_integer()
+  @spec busy(atom()) :: number()
   def busy(type) do
     :microstate_accounting
     |> :erlang.statistics()

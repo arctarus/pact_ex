@@ -116,7 +116,7 @@ defmodule PactEx.PluginContentsTest do
 
   describe "load_all/2 and cleanup/1" do
     setup do
-      PactEx.MissingPluginDir.set()
+      on_exit(PactEx.MissingPluginDir.set())
     end
 
     test "load_all/2 with no plugins is :ok" do

@@ -8,7 +8,7 @@ defmodule PactEx.Native.PluginsTest do
   @moduletag timeout: 120_000
 
   setup do
-    PactEx.MissingPluginDir.set()
+    on_exit(PactEx.MissingPluginDir.set())
   end
 
   defp v4_pact do
