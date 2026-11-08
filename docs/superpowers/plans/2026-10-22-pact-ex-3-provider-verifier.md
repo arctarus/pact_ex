@@ -52,13 +52,15 @@ pact_erlang parity for `pact_verifier`, plus transports.
 - Test: `test/pact_ex/native/verifier_test.exs`
 
 **Interfaces:**
-- Consumes (plan 1): `FfiError`, `clear_error`, `last_error`, `to_cstring`, `on_large_stack`. Plan 1 `PactEx.Consumer.run/4` generates fixture pacts.
+- Consumes (plan 1): `FfiError`, `clear_error`, `last_error`, `failure_with`, `to_cstring`, `on_large_stack`, `args::port_arg`. Plan 1 `PactEx.Consumer.run/4` generates fixture pacts.
 - Produces:
   - `PactEx.Native.verify(config :: map()) :: {:ok, %{exit_code: integer(), json: String.t(), output: String.t()}} | {:error, map()}` (DirtyIo)
   - The Rust `#[derive(NifMap)] VerifyConfig` fields, all required in the map (Elixir fills in defaults):
     - `app_version: String`
-    - `provider_name: String`, `provider_scheme: String`, `provider_host: String`, `provider_port: u16` (0 = none), `provider_path: String`
-    - `transports: Vec<TransportConfig { protocol: String, port: u16, path: Option<String>, scheme: Option<String> }>`
+    - `provider_name: String`, `provider_scheme: String`, `provider_host: String`, `provider_port: i64` (0 = none), `provider_path: String`
+    - `transports: Vec<TransportConfig { protocol: String, port: i64, path: Option<String>, scheme: Option<String> }>`
+
+    Ports are `i64` on purpose. Rustler decodes `u16` with a truncating cast, so `70000` would become `4464`. Convert each port with `args::port_arg`, which raises `ArgumentError` outside `0..=65535`, as the mock server NIFs do.
     - `filter_description: Option<String>`, `filter_state: Option<String>`, `filter_no_state: bool`
     - `state_change_url: Option<String>`, `state_change_teardown: bool`
     - `disable_ssl_verification: bool`, `request_timeout_ms: u64`
