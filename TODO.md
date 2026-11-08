@@ -2,10 +2,6 @@
 
 Open issues from the plan 1 and plan 2 reviews. Done items are removed. The history is in git and in the SDD ledger, which is git-ignored.
 
-## Plans
-
-- [ ] Re-review plan 3 against the plan 1 code.
-
 ## Important: from the plan 2 review, for 0.2.1
 
 - [ ] `SyncMessage` drops the request and the responses without a word when `plugin_contents` is set (`lib/pact_ex/sync_message/runner.ex:187`: `check_response_types/2` checks their types and then they are discarded). Everywhere else a lost value is a `-101`. Make `with_plugin_contents/2` together with `with_request/3` or `will_respond_with/3` return `-101`, and drop the `content_type` check of the responses, which has no effect. Do it soon: it turns a silent no-op into an error.
