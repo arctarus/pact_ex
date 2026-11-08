@@ -38,14 +38,14 @@ defmodule PactEx.Pact do
 
     spec = Keyword.fetch!(opts, :spec)
 
-    unless spec in @specs do
+    if spec not in @specs do
       raise ArgumentError,
             "invalid :spec #{inspect(spec)}, expected one of #{inspect(@specs)}"
     end
 
     pact_dir = Keyword.fetch!(opts, :pact_dir)
 
-    unless is_binary(pact_dir) and pact_dir != "" do
+    if not (is_binary(pact_dir) and pact_dir != "") do
       raise ArgumentError,
             "invalid :pact_dir #{inspect(pact_dir)}, expected a non-empty string"
     end

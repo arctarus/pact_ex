@@ -48,7 +48,7 @@ defmodule PactEx.Matchers do
   def each_like(value, opts \\ [min: 1]) when is_list(opts) do
     min = opts |> Keyword.validate!(min: 1) |> Keyword.fetch!(:min)
 
-    unless is_integer(min) and min > 0 do
+    if not (is_integer(min) and min > 0) do
       raise ArgumentError, "expected :min to be a positive integer, got: #{inspect(min)}"
     end
 
