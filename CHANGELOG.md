@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `SyncMessage.run/4` returns a `-101` error when `with_plugin_contents/2` is
+  combined with `with_request/3` or `will_respond_with/3`. It used to drop the
+  request and the responses without a word.
+- `scripts/install-protobuf-plugin.sh` pins the SHA-256 of the plugin binary
+  for each OS and architecture, not only the manifest.
+- `using_plugin` on a pact whose plugins were already unloaded returns code
+  `-103`. It used `2`, which also means "failed to load the plugin".
+
 ## 0.2.0 - 2026-11-08
 
 - Async messages: `PactEx.Message` and `PactEx.Message.Reified`.

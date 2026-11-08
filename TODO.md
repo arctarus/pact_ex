@@ -2,12 +2,6 @@
 
 Open issues from the plan 1 and plan 2 reviews. Done items are removed. The history is in git and in the SDD ledger, which is git-ignored.
 
-## Important: from the plan 2 review, for 0.2.1
-
-- [ ] `SyncMessage` drops the request and the responses without a word when `plugin_contents` is set (`lib/pact_ex/sync_message/runner.ex:187`: `check_response_types/2` checks their types and then they are discarded). Everywhere else a lost value is a `-101`. Make `with_plugin_contents/2` together with `with_request/3` or `will_respond_with/3` return `-101`, and drop the `content_type` check of the responses, which has no effect. Do it soon: it turns a silent no-op into an error.
-- [ ] `scripts/install-protobuf-plugin.sh:64` checks the binary only against the `.sha256` of the same release. That protects against a corrupt download, not against changed release files, and the binary is what runs. Pin the binary hash for each OS and architecture (4 constants, from the digest GitHub reports for each asset), like `MANIFEST_SHA256`. Update them with every plugin version.
-- [ ] `already_cleaned_up` (`native/pact_ex_nif/src/plugins.rs:33`) uses code 2, which pact_ffi means as "Failed to load the plugin" for `pactffi_using_plugin`. Anyone who filters on `code` cannot tell them apart. Use another code, or delete the `plugins_cleaned` guard and its tests: the public API cannot reach it, because `pact_ref` is internal.
-
 ## Minor: code
 
 - [ ] Wrong comment in `native/pact_ex_nif/src/plugins.rs:64`: it says the driver starts the plugin "while pact_ffi holds its global `PACT_HANDLES`". In pact_ffi 0.5.12 (`plugins/mod.rs:84-94`) `load_plugin` runs in `RUNTIME.block_on` before `with_pact`, so that mutex is not held during the load (it is for `interaction_contents`). The lock that stays held is the plugin driver's `PLUGIN_REGISTER`, as the README and `ci.yml` say. Also note there that every `pactffi_using_plugin` sleeps 500 ms, so each plugin test pays that plus the process start.
