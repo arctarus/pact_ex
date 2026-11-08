@@ -239,7 +239,11 @@ defmodule PactEx.Verifier.EndpointTest do
 
   test "state setup passes state, params and action" do
     parent = self()
-    handler = fn state, params, action -> send(parent, {state, params, action}); {:ok, %{"id" => 7}} end
+    handler = fn state, params, action ->
+      send(parent, {state, params, action})
+      {:ok, %{"id" => 7}}
+    end
+
     conn = call(%{state_handler: handler}, "/_pact/state", %{"state" => "user exists", "params" => %{"a" => 1}, "action" => "setup"})
     assert conn.status == 200
     assert JSON.decode!(conn.resp_body) == %{"id" => 7}
