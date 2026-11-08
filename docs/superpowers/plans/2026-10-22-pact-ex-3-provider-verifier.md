@@ -312,7 +312,7 @@ git commit -m "feat: add internal endpoint for provider states and message provi
   - `PactEx.Verifier.Options.to_native(opts, endpoint_port :: pos_integer() | nil) :: map()` validates the opts with `Keyword.validate!/2` and produces exactly the `VerifyConfig` map from Task 1.
   - Opts and defaults:
     - `provider` (required)
-    - `provider_url` (default `"http://localhost"`, parsed with `URI.parse/1` into scheme/host/port/path)
+    - `provider_url` (default `"http://127.0.0.1"`, parsed with `URI.parse/1` into scheme/host/port/path; `URI.parse/1` fills in the scheme's default port). The message transport (Task 4) reaches the endpoint through this host (`base_url(&provider.host)` in `messages.rs`), and the endpoint binds `127.0.0.1`. `localhost` may resolve to `::1` first.
     - `transports` (`[%{protocol, port, path, scheme}]`, default `[]`)
     - `files`, `dirs`, `urls`
     - `broker` (keyword, see Task 5)
