@@ -114,10 +114,9 @@ defmodule PactEx.SyncMessage do
   @doc """
   Sets the whole request and response of the message through a plugin.
 
-  The plugin builds them from `contents`, so the request and responses given
-  with `with_request/3` and `will_respond_with/3` are not used. When the
-  request or a response also names a content type, it must be the media type
-  of `contents`, or the run returns a `-101` error.
+  The plugin builds them from `contents`. Combining this with `with_request/3`
+  or `will_respond_with/3` makes the run return a `-101` error, because those
+  values would be dropped without a word.
   """
   @spec with_plugin_contents(t(), PluginContents.t()) :: t()
   def with_plugin_contents(%__MODULE__{} = message, %PluginContents{} = contents) do
@@ -168,8 +167,8 @@ defmodule PactEx.SyncMessage do
     * there are no plugin contents and the request is `nil` or `""`, or a
       response is. A `nil` response would be dropped without a word, and `fun`
       would get one response fewer;
-    * the plugin contents are set and the pact has no plugin, or a content type
-      of the message names another media type than they do;
+    * the plugin contents are set and the pact has no plugin, or a request or a
+      response is set as well;
     * the request, a response, a provider state param, the plugin contents or
       the transport config cannot be encoded as JSON, or an object repeats a
       key.

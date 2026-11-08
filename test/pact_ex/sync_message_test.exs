@@ -292,17 +292,17 @@ defmodule PactEx.SyncMessageTest do
                SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
     end
 
-    test "a content type that names another media type than the plugin contents is rejected", %{
-      pact: pact
-    } do
+    test "a request or a response next to plugin contents is rejected", %{pact: pact} do
+      # A missing plugin would fail with code 2 if the runner got as far as loading it.
       pact = PactEx.using_plugin(pact, "pact-ex-no-such-plugin", "9.9.9")
       contents = PactEx.Plugin.contents("application/protobuf", %{"a" => 1})
 
       for sm <- [
-            SyncMessage.new("request")
-            |> SyncMessage.with_request(%{}, content_type: "application/json"),
-            SyncMessage.new("response")
-            |> SyncMessage.will_respond_with(%{}, content_type: "application/json")
+            SyncMessage.with_request(SyncMessage.new("request"), %{"a" => 1}),
+            SyncMessage.with_request(SyncMessage.new("typed request"), nil,
+              content_type: "application/protobuf"
+            ),
+            SyncMessage.will_respond_with(SyncMessage.new("response"), %{"a" => 1})
           ] do
         sm = SyncMessage.with_plugin_contents(sm, contents)
 
@@ -310,7 +310,7 @@ defmodule PactEx.SyncMessageTest do
                 %PactEx.Error{function: "PactEx.SyncMessage.run/4", code: -101, message: message}} =
                  SyncMessage.run(pact, sm, fn _ -> flunk("the handler must not run") end)
 
-        assert message =~ "application/protobuf"
+        assert message =~ "plugin contents and also a request or a response"
       end
     end
 
