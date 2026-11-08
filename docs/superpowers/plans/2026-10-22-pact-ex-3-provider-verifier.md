@@ -36,7 +36,9 @@ pact_erlang parity for `pact_verifier`, plus transports.
 
 ## Review Focus
 
-1. **The state handler raises or returns an error.** The verification fails with that interaction marked as an error and the handler's message in the report. The BEAM keeps running and the endpoint is stopped. Tested in Task 3.
+1. **The state handler raises or returns an error.** The verification fails quickly, with that interaction marked as an error, and the handler's reason is in the `VerificationError` message. The BEAM keeps running and the endpoint is stopped. Tested in Task 3. Two pact_verifier facts shape this:
+   - It retries a state change that gets a 5xx up to 8 times, waiting 0.5 s, 1 s, 2 s … 64 s (`utils.rs` `with_retries`, `is_retryable`). That is about 127 s per failing call, and the handler runs each time. So the endpoint answers a failed callback with 422, which is not retried.
+   - It keeps only the status code of a failed state change and drops the body (`provider_client.rs` `make_state_change_request`). So the report says "422", not why. The endpoint sends the reason to the process that called `verify/1`, which adds it to the error.
 2. **No message provider for a description.** If a `fallback` is configured, it is used. Otherwise the endpoint answers 404 and the report names the missing description. Tested in Task 4.
 3. **No pacts found.** With `no_pacts_is_error: true` (the default) the result is `{:error, %VerificationError{}}`. With `false` it is `:ok`. This holds for every source. pact_verifier 1.4.7 checks the flag only when a Pact Broker returns no pacts. An empty directory, or a directory with no pact for this provider, verifies nothing and passes (`lib.rs` `walkdir`). So `verify/1` adds the same check for the other sources in Elixir (Task 3). A missing file or directory is always an error. Tested in Tasks 3 and 5.
 4. **The provider is unreachable.** Pointing at a closed port returns `{:error, %VerificationError{}}` within `request_timeout` and does not hang. Tested in Task 3.
@@ -204,15 +206,17 @@ git commit -m "feat(native): add one-shot verify NIF; record verifier segfault s
 
 **Interfaces:**
 - Produces:
-  - `PactEx.Verifier.Endpoint`, a Plug. `init/1` takes `%{state_handler: fun | nil, message_providers: %{String.t() => fun}, fallback: fun | nil}`.
+  - `PactEx.Verifier.Endpoint`, a Plug. `init/1` takes `%{state_handler: fun | nil, message_providers: %{String.t() => fun}, fallback: fun | nil, report_to: {pid(), reference()} | nil}`. Missing keys default to `nil` (`%{}` for `message_providers`).
     - `POST /_pact/state` calls `state_handler.(state, params, action)`, where `action` is `:setup | :teardown`.
       - Return `:ok` → 200 `{}`.
       - Return `{:ok, map}` → 200 with the map as JSON. The verifier injects those values into the requests.
-      - Return `{:error, reason}`, or a raise → 500 with `{"error": inspect(reason)}`.
-    - `POST /_pact/messages` looks up `message_providers[description]`, falling back to `fallback`. It calls the function with `provider_states :: [%{name: String.t(), params: map()}]`.
+      - Return `{:error, reason}`, or a raise, throw or exit → 422 with `{"error": reason}`, where `reason` is `inspect(reason)` or `Exception.format(kind, error)`. Never 5xx: pact_verifier retries those (Review Focus 1).
+    - `POST /_pact/messages` looks up `message_providers[description]`, falling back to `fallback`. It calls the function with `provider_states :: [%{name: String.t(), params: map()}]`. `params` is `%{}` when the pact has none.
       - The function returns `{contents, metadata}` or `contents`. A map/list is sent as `application/json`. A `{binary, content_type}` tuple is sent raw with that content type.
       - Metadata goes in the `Pact-Message-Metadata` header as `Base.encode64(JSON.encode!(metadata))`.
-      - With no provider and no fallback → 404 `{"error": "no message provider for <description>"}`.
+      - A raise, throw or exit → 422 `{"error": reason}`, as for the state handler.
+      - With no provider and no fallback → 404 `{"error": "no message provider for <description>"}`. pact_verifier reads that as a message with the wrong contents, so the report lists a body mismatch under the description.
+    - Every 422 and 404 with `report_to: {pid, ref}` set also does `send(pid, {:pact_ex_callback_error, ref, text})`, where `text` names the state and action, or the message description, followed by `reason`. The callbacks run in Bandit's processes, so this is the only way the reason reaches `verify/1`.
   - `PactEx.Verifier.EndpointServer.start(opts) :: {:ok, %{pid: pid(), port: pos_integer()}}` starts Bandit on `127.0.0.1` port 0 and reads the bound port via `ThousandIsland.listener_info/1`.
   - `PactEx.Verifier.EndpointServer.stop(server) :: :ok`
 
@@ -239,10 +243,14 @@ defmodule PactEx.Verifier.EndpointTest do
     assert_received {"user exists", %{"a" => 1}, :setup}
   end
 
-  test "a raising state handler returns 500" do
-    conn = call(%{state_handler: fn _, _, _ -> raise "nope" end}, "/_pact/state", %{"state" => "s", "params" => %{}, "action" => "setup"})
-    assert conn.status == 500
+  test "a raising state handler returns 422 and reports the reason" do
+    ref = make_ref()
+    opts = %{state_handler: fn _, _, _ -> raise "nope" end, report_to: {self(), ref}}
+    conn = call(opts, "/_pact/state", %{"state" => "db ready", "params" => %{}, "action" => "setup"})
+    assert conn.status == 422
     assert conn.resp_body =~ "nope"
+    assert_received {:pact_ex_callback_error, ^ref, text}
+    assert text =~ "db ready" and text =~ "setup" and text =~ "nope"
   end
 
   test "message provider returns JSON contents and base64 metadata header" do
@@ -300,7 +308,7 @@ git commit -m "feat: add internal endpoint for provider states and message provi
 - Produces:
   - `PactEx.Verifier.verify(opts :: keyword()) :: :ok | {:error, PactEx.VerificationError.t()}`
   - `PactEx.Verifier.verify!(opts) :: :ok`
-  - `PactEx.VerificationError` exception with fields `exit_code :: integer()`, `report :: map()` (the decoded verifier JSON) and `output :: String.t()`. `message/1` lists each failing interaction's `description` and mismatch summary from `report["errors"]`.
+  - `PactEx.VerificationError` exception with fields `exit_code :: integer()`, `report :: map()` (the decoded verifier JSON), `output :: String.t()` and `callback_errors :: [String.t()]` (the reasons sent by the endpoint, in arrival order). `message/1` lists each failing interaction's `description` and mismatch summary from `report["errors"]`, then the `callback_errors`. When both are empty (exit code 2, such as a plugin that failed to load), it shows `output`.
   - `PactEx.Verifier.Options.to_native(opts, endpoint_port :: pos_integer() | nil) :: map()` validates the opts with `Keyword.validate!/2` and produces exactly the `VerifyConfig` map from Task 1.
   - Opts and defaults:
     - `provider` (required)
@@ -321,9 +329,9 @@ git commit -m "feat: add internal endpoint for provider states and message provi
 
     With `state_handler`, `state_change_url` becomes `http://127.0.0.1:<endpoint>/_pact/state` and teardown follows the option. `app_version` is pact_ex's own version.
   - `verify/1` behaviour:
-    1. Start `EndpointServer` only when `state_handler` or message providers are present.
+    1. Start `EndpointServer` only when `state_handler` or message providers are present, with `report_to: {self(), make_ref()}`.
     2. Call `Native.verify/1`.
-    3. Always stop the endpoint (`try/after`).
+    3. Always stop the endpoint (`try/after`). Then take every `{:pact_ex_callback_error, ref, text}` for that `ref` from the mailbox (`receive ... after 0`) into `callback_errors`. They are already there: the endpoint sent them before it answered the verifier.
     4. Exit code 0 → `:ok`. Otherwise → `{:error, %VerificationError{}}`. A native `{:error, map}` raises `PactEx.Error`.
     5. Exit code 0 with an empty `report["interactionResults"]` and `no_pacts_is_error: true` → `{:error, %VerificationError{}}` whose message says that no interaction was verified for the provider. pact_verifier does not apply the flag to files and directories (Review Focus 3). Filters that match nothing end here too, which is what the flag is for.
 
@@ -362,12 +370,18 @@ defmodule PactEx.Acceptance.HttpProviderTest do
     assert :ok = Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir], state_handler: handler)
   end
 
-  test "a failing state handler fails verification without crashing", %{dir: dir, provider: p} do
-    assert {:error, %PactEx.VerificationError{report: report}} =
-             Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir],
-               state_handler: fn _, _, _ -> {:error, :db_down} end)
+  # A 5xx would be retried for about 127 s per state call. The 422 fails at once.
+  test "a failing state handler fails verification quickly and names the reason", %{dir: dir, provider: p} do
+    {micros, result} =
+      :timer.tc(fn ->
+        Verifier.verify(provider: "animal_service", provider_url: "http://127.0.0.1:#{p.port}", dirs: [dir],
+          state_handler: fn _, _, _ -> {:error, :db_down} end)
+      end)
 
+    assert {:error, %PactEx.VerificationError{report: report} = error} = result
     assert report["result"] == false
+    assert Exception.message(error) =~ ":db_down"
+    assert micros < 10_000_000
   end
 end
 ```
