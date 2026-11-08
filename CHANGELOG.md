@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - <release date>
+## 0.2.0 - 2026-11-08
 
 - Async messages: `PactEx.Message` and `PactEx.Message.Reified`.
   `Message.run/4` and `run!/4` build the message, call your function with the
