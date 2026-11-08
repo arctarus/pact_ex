@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status:** Written before plans 1 and 2 were implemented. Review it against the real code before executing. Task 1 is a decision gate. If its outcome is "stop", the rest of this plan is revised before anyone continues.
+> **Status:** Reviewed against `main` at 73c34f6 (0.2.0), and against the `pact_ffi` 0.5.12 and `pact_verifier` 1.4.7 sources. Ready to execute. Task 1 is a decision gate. If its outcome is "stop", the rest of this plan is revised before anyone continues.
 
 **Goal:** Verify a provider against pacts from files, directories, URLs or a Pact Broker, from ExUnit or a plain function. Supported:
 - HTTP providers, with provider states handled by an Elixir callback.
@@ -140,8 +140,8 @@ Temporary, for the spike only: if the env var `PACT_EX_VERIFIER_STACK=caller` is
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/native/verifier_test.exs`
-Expected: PASS (2 tests).
+Run: `mix test test/pact_ex/native/verifier_test.exs`, then `mix precommit`, then, in `native/pact_ex_nif`, `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+Expected: PASS (2 tests), and every check green.
 
 - [ ] **Step 5: Run the segfault spike on Linux**
 
@@ -262,8 +262,8 @@ Expected: FAIL with `module PactEx.Verifier.Endpoint is not available`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/verifier/endpoint_test.exs`
-Expected: PASS (5 tests).
+Run: `mix test test/pact_ex/verifier/endpoint_test.exs`, then `mix precommit`.
+Expected: PASS (5 tests), and `mix precommit` green.
 
 - [ ] **Step 5: Commit**
 
@@ -398,8 +398,8 @@ Expected: FAIL with `PactEx.Verifier.Options.to_native/2 is undefined`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `mix test test/pact_ex/verifier_test.exs test/acceptance`
-Expected: PASS.
+Run: `mix test test/pact_ex/verifier_test.exs test/acceptance`, then `mix precommit`.
+Expected: PASS, and `mix precommit` green.
 
 - [ ] **Step 5: Commit**
 
@@ -464,8 +464,8 @@ Expected: FAIL. With no message transport configured, the verifier sends the mes
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `mix test test/acceptance/message_provider_test.exs`
-Expected: PASS (3 tests).
+Run: `mix test test/acceptance/message_provider_test.exs`, then `mix precommit`.
+Expected: PASS (3 tests), and `mix precommit` green.
 
 - [ ] **Step 5: Commit**
 
@@ -550,8 +550,8 @@ Expected: FAIL with `unknown keys [:broker]` or the missing `ArgumentError`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: same command as Step 2.
-Expected: PASS.
+Run: same command as Step 2, then `mix precommit`.
+Expected: PASS, and `mix precommit` green.
 
 - [ ] **Step 5: Commit**
 
@@ -636,7 +636,7 @@ Complete the parity table.
 
 - [ ] **Step 3: Verify**
 
-Run: `mix test && mix format --check-formatted && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy -- -D warnings)`
+Run: `mix precommit && (cd native/pact_ex_nif && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)`
 Expected: all green.
 
 - [ ] **Step 4: Commit**
