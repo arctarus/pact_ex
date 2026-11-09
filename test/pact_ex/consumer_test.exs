@@ -983,6 +983,20 @@ defmodule PactEx.ConsumerTest do
 
       assert message =~ "Content-Type"
     end
+
+    test "an atom and a string Content-Type name are rejected", %{pact: pact} do
+      i =
+        HTTP.interaction("atom and string content type")
+        |> HTTP.with_request(:get, "/d")
+        |> HTTP.will_respond_with(200,
+          headers: %{:content_type => "a/b", "Content-Type" => "text/plain"}
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "Content-Type"
+    end
   end
 
   describe "run/4 Content-Type header that resolves to an empty list" do
@@ -1277,6 +1291,11 @@ defmodule PactEx.ConsumerTest do
 
       assert written["response"]["headers"]["x-out-id"] == ["o"]
       assert written["response"]["headers"]["Content-Type"] == ["text/plain"]
+
+      # pact_ffi adds Content-Type from a text body anyway, so check the whole
+      # key set: no second spelling of it.
+      assert Map.keys(written["response"]["headers"]) |> Enum.sort() ==
+               ["Content-Type", "x-out-id"]
     end
 
     test "an atom header name with an underscore canonicalises Content-Type", %{pact: pact} do
