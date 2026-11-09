@@ -262,7 +262,10 @@ defmodule PactEx.ConsumerTest do
 
     test "rejects unknown options", %{pact: pact} do
       i = simple("opts", "/opts")
-      assert_raise ArgumentError, fn -> Consumer.run(pact, [i], fn _ -> :ok end, bad(hots: 1)) end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:hots\].*\[:host, :port\]/, fn ->
+        Consumer.run(pact, [i], fn _ -> :ok end, bad(hots: 1))
+      end
     end
 
     test "supports several interactions in one pact", %{pact: pact, tmp_dir: dir} do
@@ -2588,7 +2591,10 @@ defmodule PactEx.ConsumerTest do
       i = simple("range", "/range")
       assert_raise ArgumentError, fn -> Consumer.start_mock_server(pact, [i], port: 70_000) end
       assert_raise ArgumentError, fn -> Consumer.start_mock_server(pact, [i], port: -1) end
-      assert_raise ArgumentError, fn -> Consumer.start_mock_server(pact, [i], bad(hots: "x")) end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:hots\]/, fn ->
+        Consumer.start_mock_server(pact, [i], bad(hots: "x"))
+      end
     end
 
     test "rejects a NUL byte in the consumer, provider or description", %{tmp_dir: dir} do
