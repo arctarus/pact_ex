@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status:** Reviewed against `main` at 73c34f6 (0.2.0), and against the `pact_ffi` 0.5.12 and `pact_verifier` 1.4.7 sources. Ready to execute. Task 1 is a decision gate. If its outcome is "stop", the rest of this plan is revised before anyone continues.
+> **Status:** Reviewed against `main` at 73c34f6 (0.2.0), checked again at 274358c, and against the `pact_ffi` 0.5.12 and `pact_verifier` 1.4.7 sources. Ready to execute. Task 1 is a decision gate. If its outcome is "stop", the rest of this plan is revised before anyone continues.
 
 **Goal:** Verify a provider against pacts from files, directories, URLs or a Pact Broker, from ExUnit or a plain function. Supported:
 - HTTP providers, with provider states handled by an Elixir callback.
@@ -35,6 +35,7 @@ pact_erlang parity for `pact_verifier`, plus transports.
   - The message request is `POST` with a JSON body `{"description": String, "providerStates": [{"name": String, "params": Object}]}`.
   - The message response body holds the contents with their `content-type`. Metadata goes in the `Pact-Message-Metadata` header as base64-encoded JSON.
   - A failed callback (state handler or message provider) answers 422, never 5xx. pact_verifier retries a 5xx state change for about 127 s (Review Focus 1).
+- Every new test support module lives under `PactEx.Test` (`test/support/test/*.ex` for the shared helpers, and `PactEx.Test.AnimalProvider` and the like), and tests alias it, because Credo's `AliasUsage` flags a nested name that is used without an alias. The older global modules (`PactFile`, `AnimalClient`, `PluginProcesses`, `CollidingRoot`) are listed in `TODO.md` for a later move. Do not move them in this plan.
 - Broker tests are tagged `:broker` and excluded unless `PACT_BROKER_URL` is set. Plugin tests keep plan 2's `:plugin` rule.
 - Every verification ends with pact-plugin-driver's `shutdown_plugins()` (`pact_verifier` `lib.rs`, unconditional), which kills every plugin process in the VM, HTTP-only verifications included. So a `verify/1` must never overlap a test that uses a plugin. In this repo every `:plugin` module is `async: false`, and ExUnit runs the `async: true` modules before the others, so the `async: true` verifier tests never overlap them. Keep it that way.
 - Test broker: `test/support/docker-compose.yml` runs `pactfoundation/pact-broker` on port 9292 with `PACT_BROKER_DATABASE_ADAPTER=sqlite` and `PACT_BROKER_DATABASE_NAME=/tmp/pact_broker.sqlite3`. Health check: `GET /diagnostic/status/heartbeat`, written as a compose `healthcheck:` block, because `docker compose up --wait` waits only for services that have one. Check which HTTP tool the image has (`wget` or `curl`) before writing the `test:` command.
@@ -290,7 +291,7 @@ end
 Run: `mix test test/pact_ex/verifier/endpoint_test.exs`
 Expected: FAIL with `module PactEx.Verifier.Endpoint is not available`.
 
-- [ ] **Step 3: Implement `Endpoint` and `EndpointServer`** as listed in Interfaces. Use `Plug.Router` with `Plug.Parsers` (`:json` with `json_decoder: JSON`). Wrap each module in its `Code.ensure_loaded?` guard (Global Constraints). Start Bandit with `plug: {Endpoint, opts}, ip: {127, 0, 0, 1}, port: 0, startup_log: false`.
+- [ ] **Step 3: Implement `Endpoint` and `EndpointServer`** as listed in Interfaces. Use `Plug.Router` with `Plug.Parsers` (`:json` with `json_decoder: JSON`). Wrap each module in its `Code.ensure_loaded?` guard (Global Constraints). Then run `mix precommit`: Dialyzer may warn about the calls to `Plug` and `Bandit` inside those guards, because the optional deps are in the PLT only in the environments that load them. Nobody has run it on this code. If it warns, add the narrowest ignore with a comment (`.dialyzer_ignore.exs` and `ignore_warnings:` in the `dialyzer` config, as Task 6 describes), and report it. Start Bandit with `plug: {Endpoint, opts}, ip: {127, 0, 0, 1}, port: 0, startup_log: false`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -351,9 +352,9 @@ git commit -m "feat: add internal endpoint for provider states and message provi
 - `POST /animals`: 201.
 - `GET /animals?type=`: 200 `{"animals": [...]}`.
 
-Every JSON response has `Content-Type: application/json`. `AnimalProvider.start() :: {:ok, %{port: p, store: agent}}` serves it with Bandit on port 0. The store starts empty.
+Every JSON response has `Content-Type: application/json`. `PactEx.Test.AnimalProvider.start() :: {:ok, %{port: p, store: agent}}` serves it with Bandit on port 0. The store starts empty.
 
-`AnimalProvider.state_handler(provider)` returns the handler for the plan 1 states, shared by Tasks 3 and 5. The pact has three interactions with a state, and each one needs its animal in the store:
+`PactEx.Test.AnimalProvider.state_handler(provider)` returns the handler for the plan 1 states, shared by Tasks 3 and 5. The pact has three interactions with a state, and each one needs its animal in the store:
 - `"an alligator with the name Mary exists"` (Mary, and the alligator search) puts `%{"name" => "Mary", "type" => "alligator"}`.
 - `"a dog with the name Duke exists"` puts `%{"name" => "Duke", "type" => "Dog"}`.
 - Any other state or action returns `:ok`.
@@ -362,6 +363,7 @@ Every JSON response has `Content-Type: application/json`. `AnimalProvider.start(
 # test/acceptance/http_provider_test.exs
 defmodule PactEx.Acceptance.HttpProviderTest do
   use ExUnit.Case, async: false
+  alias PactEx.Test.{AnimalInteractions, AnimalProvider}
   alias PactEx.Verifier
 
   @moduletag :tmp_dir
@@ -401,6 +403,7 @@ end
 # test/pact_ex/verifier_test.exs
 defmodule PactEx.VerifierTest do
   use ExUnit.Case, async: true
+  alias PactEx.Test.AnimalInteractions
   alias PactEx.Verifier
   alias PactEx.Verifier.Options
 
@@ -440,7 +443,7 @@ end
 Run: `mix test test/pact_ex/verifier_test.exs test/acceptance/http_provider_test.exs`
 Expected: FAIL with `PactEx.Verifier.Options.to_native/2 is undefined`.
 
-- [ ] **Step 3: Implement `Options`, `VerificationError` and `Verifier`** as listed in Interfaces. Extract `AnimalInteractions` from plan 1's `test/acceptance/http_end_to_end_test.exs`, and update that test to use it.
+- [ ] **Step 3: Implement `Options`, `VerificationError` and `Verifier`** as listed in Interfaces. Extract `PactEx.Test.AnimalInteractions` from plan 1's `test/acceptance/http_end_to_end_test.exs`, and update that test to use it.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -558,6 +561,7 @@ end
 # test/acceptance/broker_test.exs
 defmodule PactEx.Acceptance.BrokerTest do
   use ExUnit.Case, async: false
+  alias PactEx.Test.{AnimalInteractions, AnimalProvider, Broker}
   alias PactEx.Verifier
 
   @moduletag :broker
@@ -593,7 +597,7 @@ defmodule PactEx.Acceptance.BrokerTest do
 end
 ```
 
-`Broker.matrix/2` calls `GET /matrix?q[][pacticipant]=<consumer>&q[][version]=<version>&latestby=cvp` and returns the `"matrix"` list.
+`PactEx.Test.Broker.matrix/2` calls `GET /matrix?q[][pacticipant]=<consumer>&q[][version]=<version>&latestby=cvp` and returns the `"matrix"` list.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -619,17 +623,17 @@ git commit -m "feat: verify from Pact Broker and publish verification results"
 ### Task 6: gRPC provider transport
 
 **Files:**
-- Create: `test/support/route_guide_server.ex` (`RouteGuideServer` and `WrongRouteGuideServer`, two `GRPC.Server` modules implementing `GetFeature`), `test/support/grpc_interactions.ex`
-- Modify: `mix.exs` (`{:grpc_server, "~> 1.0", only: :test}`), `mix.lock`, `test/acceptance/grpc_consumer_test.exs` (use `GrpcInteractions`)
+- Create: `test/support/route_guide_server.ex` (`PactEx.Test.RouteGuideServer` and `PactEx.Test.WrongRouteGuideServer`, two `GRPC.Server` modules implementing `GetFeature`), `test/support/grpc_interactions.ex`
+- Modify: `mix.exs` (`{:grpc_server, "~> 1.0", only: :test}`), `mix.lock`, `test/acceptance/grpc_consumer_test.exs` (use `PactEx.Test.GrpcInteractions`)
 - Test: `test/acceptance/grpc_provider_test.exs`
 
 **Interfaces:**
-- Consumes: Task 3 `verify/1` with `transports`, the plan 2 `Routeguide.*` test modules, and the plan 2 gRPC consumer interactions. Extract the `get_feature/1` builder and the `call/2` client helper from `test/acceptance/grpc_consumer_test.exs` into `GrpcInteractions`, and make that test use them.
+- Consumes: Task 3 `verify/1` with `transports`, the plan 2 `Routeguide.*` test modules, and the plan 2 gRPC consumer interactions. Extract the `get_feature/1` builder and the `call/2` client helper from `test/acceptance/grpc_consumer_test.exs` into `PactEx.Test.GrpcInteractions`, and make that test use them.
 - Produces:
-  - `GrpcInteractions.write_consumer_pact(dir) :: :ok` writes `grpcconsumer-grpcprovider.json` with the success and the `NOT_FOUND` interactions, through `SyncMessage.run/4` and a real gRPC client call, as the plan 2 test does. Give the two interactions different descriptions (for example `"Route guide - GetFeature"` and `"Route guide - GetFeature not found"`): a merge into the same pact file may replace an interaction that has the same description and states.
+  - `PactEx.Test.GrpcInteractions.write_consumer_pact(dir) :: :ok` writes `grpcconsumer-grpcprovider.json` with the success and the `NOT_FOUND` interactions, through `SyncMessage.run/4` and a real gRPC client call, as the plan 2 test does. Give the two interactions different descriptions (for example `"Route guide - GetFeature"` and `"Route guide - GetFeature not found"`): a merge into the same pact file may replace an interaction that has the same description and states.
   - Nothing new in lib. This task proves that `transports` works with a plugin transport.
 
-The server is not in the `grpc` package. Since grpc-elixir 1.0, `grpc` is the client only (its `lib/grpc` has `channel.ex`, `client/` and `stub.ex`), and the server is the separate `grpc_server` package (1.0.6 at the time of writing). `grpc_server` 1.0.6 needs `grpc_core ~> 1.0.6`, and `mix.lock` pins 1.0.5, so run `mix deps.update grpc grpc_core` after adding it. It also brings `cowboy` and `ranch`. If the resolution fails against `gun`'s `cowlib`, stop and report.
+The server is not in the `grpc` package. Since grpc-elixir 1.0, `grpc` is the client only (its `lib/grpc` has `channel.ex`, `client/` and `stub.ex`), and the server is the separate `grpc_server` package (1.0.6 at the time of writing). `mix deps.get` resolves it to `grpc_server` 1.0.5 with the locked `grpc_core` 1.0.5, with `cowboy`, `ranch` and the `cowlib` that `gun` needs (checked against `main` at 274358c, without a lock update). If a later resolution fails, stop and report.
 
 `GRPC.Server.start(servers, port, opts)` returns `{:ok, pid, port}` and reads the bound port from ranch when `port` is 0. It is `@doc false` in 1.0.6, but it is the only call that returns the port picked for 0. `GRPC.Server.Supervisor` takes a fixed port. Pass `adapter_opts: [ip: {127, 0, 0, 1}]`. `GRPC.Server.stop(servers)` stops it.
 
@@ -642,6 +646,7 @@ The verifier loads the plugins of the pact itself, and kills every plugin proces
 defmodule PactEx.Acceptance.GrpcProviderTest do
   use ExUnit.Case, async: false
 
+  alias PactEx.Test.{GrpcInteractions, RouteGuideServer, WrongRouteGuideServer}
   alias PactEx.Verifier
 
   # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
@@ -677,8 +682,8 @@ end
 ```
 
 Both servers `use GRPC.Server, service: Routeguide.RouteGuide.Service`, and each has a `@moduledoc` and a `@spec` on `get_feature/2` (Credo strict covers `test/`).
-- `RouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "Big Tree", location: point}` for `(180, 200)`, and raises `GRPC.RPCError, status: :not_found, message: "no feature was found"` for any other point.
-- `WrongRouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "", location: point}` for `(180, 200)`, which breaks `notEmpty('Big Tree')`, and raises the same `NOT_FOUND` for any other point.
+- `PactEx.Test.RouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "Big Tree", location: point}` for `(180, 200)`, and raises `GRPC.RPCError, status: :not_found, message: "no feature was found"` for any other point.
+- `PactEx.Test.WrongRouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "", location: point}` for `(180, 200)`, which breaks `notEmpty('Big Tree')`, and raises the same `NOT_FOUND` for any other point.
 
 As in plan 2 Task 5, check the code `use GRPC.Server` generates with `MIX_ENV=test mix compile --warnings-as-errors` and `MIX_ENV=test mix dialyzer`. Nobody has run them on it. A Dialyzer warning that comes only from that macro-generated code: create `.dialyzer_ignore.exs` with an entry scoped to `test/support/route_guide_server.ex`, set `ignore_warnings: ".dialyzer_ignore.exs"` in the `dialyzer` config of `mix.exs`, and report it. Any other warning is a real finding: fix it.
 
