@@ -64,6 +64,7 @@ defmodule PactEx.MixProject do
       {:bandit, "~> 1.6", optional: true},
       {:req, "~> 0.5", only: [:dev, :test]},
       {:grpc, "~> 1.0", only: :test},
+      {:grpc_server, "~> 1.0", only: :test},
       {:protobuf, "~> 0.17", only: :test},
       {:mint, "~> 1.9", only: [:dev, :test]},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
