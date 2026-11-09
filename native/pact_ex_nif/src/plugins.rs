@@ -64,8 +64,11 @@ fn load(pact: &PactResource, name: &str, version: Option<&str>) -> Result<(), Ff
 }
 
 // DirtyIo and large stack: the plugin driver runs futures with `block_on` and
-// starts the plugin process, while pact_ffi holds its global `PACT_HANDLES`
-// mutex.
+// starts the plugin process. pact_ffi does not hold `PACT_HANDLES` while the
+// plugin loads (`plugins/mod.rs`, `pactffi_using_plugin`), but the driver holds
+// its own `PLUGIN_REGISTER` lock until the plugin has started. Every call also
+// sleeps 500 ms after the load, so a plugin test pays that plus the process
+// start.
 #[rustler::nif(schedule = "DirtyIo")]
 fn using_plugin(pact: ResourceArc<PactResource>, name: String, version: Option<String>) -> Outcome {
     // A pact is not used from two processes at once, so checking the cleanup

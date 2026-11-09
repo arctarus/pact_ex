@@ -7,7 +7,7 @@ use pact_ffi::mock_server::{
     pactffi_cleanup_mock_server, pactffi_create_mock_server_for_transport,
     pactffi_mock_server_matched, pactffi_mock_server_mismatches, pactffi_write_pact_file,
 };
-use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
+use rustler::{NifResult, ResourceArc};
 
 use crate::args::port_arg;
 use crate::error::{clear_error, failure_with, to_cstring, FfiError, Outcome};
@@ -77,21 +77,6 @@ fn cleanup(port: i32) -> bool {
     pactffi_cleanup_mock_server(port)
 }
 
-/// Result of `create_mock_server`. Encodes as `{:ok, port}` or `{:error, map}`.
-pub enum Created {
-    Ok(u16),
-    Err(FfiError),
-}
-
-impl Encoder for Created {
-    fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
-        match self {
-            Created::Ok(port) => (rustler::types::atom::ok(), *port).encode(env),
-            Created::Err(error) => (rustler::types::atom::error(), error.clone()).encode(env),
-        }
-    }
-}
-
 #[rustler::nif(schedule = "DirtyIo")]
 fn create_mock_server(
     pact: ResourceArc<PactResource>,
@@ -99,7 +84,7 @@ fn create_mock_server(
     port: i64,
     transport: String,
     config_json: Option<String>,
-) -> NifResult<Created> {
+) -> NifResult<Result<u16, FfiError>> {
     const NAME: &str = "pactffi_create_mock_server_for_transport";
     let port = port_arg(port)?;
     let host_name = host.clone();
@@ -113,7 +98,7 @@ fn create_mock_server(
     });
     let (host, transport, config) = match args {
         Ok(args) => args,
-        Err(error) => return Ok(Created::Err(error)),
+        Err(error) => return Ok(Err(error)),
     };
 
     let handle = pact.handle;
@@ -128,8 +113,8 @@ fn create_mock_server(
             config_ptr,
         );
         match u16::try_from(code) {
-            Ok(port) => Created::Ok(port),
-            Err(_) => Created::Err(failure_with(NAME, i64::from(code), |code| {
+            Ok(port) => Ok(port),
+            Err(_) => Err(failure_with(NAME, i64::from(code), |code| {
                 create_message(code, &host_name, port)
             })),
         }

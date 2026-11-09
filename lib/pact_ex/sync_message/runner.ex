@@ -12,7 +12,7 @@ defmodule PactEx.SyncMessage.Runner do
 
   alias PactEx.{Consumer, Error, MismatchError, MockServer, Native}
   alias PactEx.Consumer.Apply
-  alias PactEx.{Pact, Plugin, PluginContents, SyncMessage}
+  alias PactEx.{Pact, Plugin, PluginContents, Result, SyncMessage}
   alias PactEx.SyncMessage.Generated
 
   @entry_point "PactEx.SyncMessage.run/4"
@@ -211,7 +211,7 @@ defmodule PactEx.SyncMessage.Runner do
   defp plan_responses(message) do
     message.responses
     |> Enum.with_index(1)
-    |> Apply.map_ok(fn {{response, type}, number} ->
+    |> Result.map_ok(fn {{response, type}, number} ->
       Apply.plan_body(response, type, "sync message response #{number}", @entry_point)
     end)
   end
@@ -235,7 +235,7 @@ defmodule PactEx.SyncMessage.Runner do
 
   defp contents(handle, {:bodies, request, responses}) do
     with :ok <- body(handle, :request, request) do
-      Apply.each_ok(responses, &body(handle, :response, &1))
+      Result.each_ok(responses, &body(handle, :response, &1))
     end
   end
 

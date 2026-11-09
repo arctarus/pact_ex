@@ -4,22 +4,8 @@ Open issues from the plan 1 and plan 2 reviews. Done items are removed. The hist
 
 ## Minor: code
 
-- [ ] Wrong comment in `native/pact_ex_nif/src/plugins.rs:64`: it says the driver starts the plugin "while pact_ffi holds its global `PACT_HANDLES`". In pact_ffi 0.5.12 (`plugins/mod.rs:84-94`) `load_plugin` runs in `RUNTIME.block_on` before `with_pact`, so that mutex is not held during the load (it is for `interaction_contents`). The lock that stays held is the plugin driver's `PLUGIN_REGISTER`, as the README and `ci.yml` say. Also note there that every `pactffi_using_plugin` sleeps 500 ms, so each plugin test pays that plus the process start.
-- [ ] Rust cleanups. rustler 0.38 encodes `Result<T, E>` as `{:ok, t} | {:error, e}` when both implement `Encoder`, and `FfiError` does:
-  - `Text` (`native/pact_ex_nif/src/messages.rs:21`) and `Created` (`native/pact_ex_nif/src/mock_server.rs:81`) are not needed. `message_reify`, `sync_message_generate_contents` and `create_mock_server` can return `Result<_, FfiError>`, and their `error.clone()` goes;
-  - `Outcome` stays, because it must encode `:ok` alone, but its encoder has an unneeded `clone`.
-- [ ] Plugins load before `with_specification` in `Consumer.build` (`consumer.ex:219`) and after it in both message runners. It makes no difference, but pick one order.
-- [ ] `pact_handle_write_file` code 2 says "is the directory writable?", but pact_ffi also returns 2 when it cannot merge with an existing pact file (`messages.rs:89`). Drop the hint or name both causes.
-- [ ] `MockServer.stop/1` stops by port, so a second call can stop another test's server if the port was reused. The README (around line 493) already says to stop in `on_exit`, but not to avoid also stopping in the test body. Say that, or make `stop/1` check the pact handle.
 - [ ] Consider an upstream issue for pact-reference: pact_models `calc_content_type` (`v4/mod.rs:68`) indexes `v[0]` of a Content-Type header without a bounds check, so an empty header aborts the process.
-- [ ] Each `mock_server_mismatches` call leaks a CString into pact_ffi until cleanup. Document it, or avoid polling.
-- [ ] A huge `examples` count in an XML description can stall `with_body` or run out of memory. It isn't rejected, because pact_ffi accepts it.
-- [ ] pact_ffi silently drops a form value whose matcher fails to build (e.g. `regex` without `"regex"`).
-- [ ] `String.trim/1` and Rust's `str::trim` may disagree on some Unicode whitespace (log file paths).
-- [ ] Replace `unless` in `PactEx.Matchers` (soft-deprecated style).
 - [ ] The pact_models matcher-expression parser (`matching(...)` strings) has not been audited for panics.
-- [ ] Header maps whose keys collapse to the same name after dashing (e.g. `%{:x_request_id => "1", "x-request-id" => "2"}`) silently overwrite one value; reject like two Content-Type spellings.
-- [ ] `apply.ex` module summary (lines ~9 and ~30-34): mention atom header-name dashing and that an element resolving to `[]` at any position is rejected.
 
 ## Minor: tests
 

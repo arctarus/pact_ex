@@ -70,6 +70,12 @@ defmodule PactEx.Consumer do
       them (nested maps, booleans, `nil` and keys that start with `"pact:"` are
       errors, because pact_ffi would drop them). A type that is both JSON and
       XML (`application/xml+json`) is JSON.
+    * PactEx does not check two things in these descriptions, because pact_ffi
+      accepts them. A matcher that pact_ffi cannot build, such as `regex`
+      without a `"regex"` key, becomes `null`, and a form body drops it
+      without a word. And a very large `"examples"` count in an XML element
+      makes `with_body` slow or run out of memory. Build matchers with
+      `PactEx.Matchers`, which always gives valid ones.
     * Every JSON PactEx writes is decoded again and an object that repeats a
       key is an error at any depth, for every content type. That covers
       `%{a: 1, "a" => 2}`, structs that encode to a repeated key, and matcher
@@ -84,7 +90,7 @@ defmodule PactEx.Consumer do
   """
 
   alias PactEx.Consumer.Apply
-  alias PactEx.{Error, MismatchError, MockServer, Native, Pact, Plugin}
+  alias PactEx.{Error, MismatchError, MockServer, Native, Pact, Plugin, Result}
   alias PactEx.HTTP.Interaction
 
   @entry_point "PactEx.Consumer.start_mock_server/3"
@@ -216,8 +222,10 @@ defmodule PactEx.Consumer do
   end
 
   defp build(pact, pact_ref, interactions, host, port) do
-    with :ok <- Plugin.load_all(pact_ref, pact),
-         :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
+    # The specification comes first, as in the message runners, so that nothing
+    # starts a plugin process before the pact is set up.
+    with :ok <- Apply.native(Native.with_specification(pact_ref, pact.spec)),
+         :ok <- Plugin.load_all(pact_ref, pact),
          :ok <- apply_all(pact_ref, interactions),
          {:ok, bound_port} <-
            Apply.native(Native.create_mock_server(pact_ref, host, port, "http", nil)) do
@@ -267,9 +275,9 @@ defmodule PactEx.Consumer do
 
   def verdict(false, mismatches), do: {:error, %MismatchError{mismatches: mismatches}}
 
-  defp validate_all(interactions), do: Apply.each_ok(interactions, &Apply.validate/1)
+  defp validate_all(interactions), do: Result.each_ok(interactions, &Apply.validate/1)
 
   defp apply_all(pact_ref, interactions) do
-    Apply.each_ok(interactions, &Apply.interaction(pact_ref, &1))
+    Result.each_ok(interactions, &Apply.interaction(pact_ref, &1))
   end
 end

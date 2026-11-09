@@ -6,7 +6,9 @@ defmodule PactEx.Consumer.Apply do
   # Encoding rules:
   #   * binaries pass through, maps (matchers) are JSON-encoded, integers,
   #     floats and booleans are stringified (query and header values only);
-  #   * query and header names may be binaries or atoms;
+  #   * query and header names may be binaries or atoms. An atom header name is
+  #     dashed as Req does (`:x_request_id` is "x-request-id"), and two keys
+  #     that end up with the same name are rejected;
   #   * a list value becomes one native call per element, using its index;
   #   * a map or list body is JSON, a valid UTF-8 binary without NUL is text,
   #     any other binary is sent as binary;
@@ -31,7 +33,8 @@ defmodule PactEx.Consumer.Apply do
   #     rejected (see `check_content_type_header/3`): pact_ffi indexes its
   #     first element and aborts the VM when it is missing. An empty or
   #     whitespace-only element is rejected too, and so is a `[]` value for any
-  #     header or query parameter (it would write nothing);
+  #     header or query parameter (it would write nothing), whether it is the
+  #     whole value or an element at any position of a list;
   #   * with an XML or form type, a body that pact_ffi reads as a description
   #     is checked by `PactEx.Consumer.BodyCheck` before any native call:
   #     pact_ffi panics (and aborts the VM) on some descriptions.
@@ -50,7 +53,7 @@ defmodule PactEx.Consumer.Apply do
   # another media type is an error.
 
   alias PactEx.Consumer.BodyCheck
-  alias PactEx.{Error, HTTP, Native, Pact, PluginContents}
+  alias PactEx.{Error, HTTP, Native, Pact, PluginContents, Result}
   alias PactEx.HTTP.{Interaction, Request, Response}
 
   @invalid_code -101
@@ -456,7 +459,7 @@ defmodule PactEx.Consumer.Apply do
   # value is an error too: it would make no native call, so the parameter
   # would be dropped without a word.
   defp check_params(params, label, description) do
-    each_ok(params, fn
+    Result.each_ok(params, fn
       {name, []} ->
         {:error,
          invalid(
@@ -556,7 +559,7 @@ defmodule PactEx.Consumer.Apply do
   defp with_type(headers, _source, _type), do: headers
 
   defp provider_states(handle, states) do
-    each_ok(states, fn
+    Result.each_ok(states, fn
       {name, nil} ->
         native(Native.given(handle, name))
 
@@ -589,7 +592,7 @@ defmodule PactEx.Consumer.Apply do
   defp status(other), do: {:error, invalid("unsupported response status: #{inspect(other)}")}
 
   defp query(handle, query) do
-    each_ok(query, fn {name, values} -> query_parameter(handle, name, values) end)
+    Result.each_ok(query, fn {name, values} -> query_parameter(handle, name, values) end)
   end
 
   defp query_parameter(handle, name, values) do
@@ -601,7 +604,7 @@ defmodule PactEx.Consumer.Apply do
   end
 
   defp headers(handle, part, headers) do
-    each_ok(headers, fn {name, values} -> header(handle, part, name, values) end)
+    Result.each_ok(headers, fn {name, values} -> header(handle, part, name, values) end)
   end
 
   defp header(handle, part, name, values) do
@@ -632,7 +635,7 @@ defmodule PactEx.Consumer.Apply do
     values
     |> then(&if is_list(&1), do: &1, else: [&1])
     |> Enum.with_index()
-    |> each_ok(fn {value, index} ->
+    |> Result.each_ok(fn {value, index} ->
       with {:ok, encoded} <- param_value(value, label), do: fun.(index, encoded)
     end)
   end
@@ -646,16 +649,29 @@ defmodule PactEx.Consumer.Apply do
   # Turns header names into strings and writes any spelling of Content-Type
   # as "Content-Type". Returns a list of `{name, values}`.
   defp canonical_headers(headers, label) do
-    headers
-    |> Enum.reduce_while({:ok, []}, fn {name, values}, {:ok, acc} ->
-      case header_name(name, label) do
-        {:ok, name} -> {:cont, {:ok, [{canonical_name(name), values} | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> unique_content_type(Enum.reverse(acc), label)
-      error -> error
+    with {:ok, named} <- Result.map_ok(headers, &named_header(&1, label)),
+         {:ok, named} <- unique_content_type(named, label) do
+      unique_names(named, label)
+    end
+  end
+
+  defp named_header({name, values}, label) do
+    with {:ok, name} <- header_name(name, label), do: {:ok, {canonical_name(name), values}}
+  end
+
+  # Two keys of a map can spell one name once atoms are dashed
+  # (`:x_request_id` and `"x-request-id"`). Each name is written from index 0,
+  # so the second would overwrite the first without a word.
+  defp unique_names(headers, label) do
+    names = Enum.map(headers, fn {name, _values} -> name end)
+
+    case Enum.uniq(names) do
+      ^names ->
+        {:ok, headers}
+
+      _ ->
+        name = Enum.find(names, &(Enum.count(names, fn other -> other == &1 end) > 1))
+        {:error, invalid("#{label}s contain the header #{inspect(name)} more than once")}
     end
   end
 
@@ -720,42 +736,12 @@ defmodule PactEx.Consumer.Apply do
   def native({:error, error}), do: {:error, Error.from_native(error)}
 
   @doc false
-  @spec each_ok(Enumerable.t(), (term() -> :ok | {:error, term()})) :: :ok | {:error, term()}
-  def each_ok(enumerable, fun) do
-    Enum.reduce_while(enumerable, :ok, fn item, :ok ->
-      case fun.(item) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-  end
-
-  @doc false
-  # Like `Enum.map/2`, for a function that returns `{:ok, value}` or
-  # `{:error, term}`. Stops at the first error.
-  @spec map_ok(Enumerable.t(), (term() -> {:ok, term()} | {:error, term()})) ::
-          {:ok, [term()]} | {:error, term()}
-  def map_ok(enumerable, fun) do
-    enumerable
-    |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
-      case fun.(item) do
-        {:ok, value} -> {:cont, {:ok, [value | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> {:ok, Enum.reverse(acc)}
-      error -> error
-    end
-  end
-
-  @doc false
   # Plans the provider states of a message, without any native call. Returns
   # `{name, params_json | nil}` pairs for `given_states/2`.
   @spec plan_states([{String.t(), map() | nil}], String.t()) ::
           {:ok, [{String.t(), String.t() | nil}]} | {:error, Error.t()}
   def plan_states(states, entry_point) do
-    map_ok(states, fn
+    Result.map_ok(states, fn
       {name, nil} ->
         {:ok, {name, nil}}
 
@@ -772,7 +758,7 @@ defmodule PactEx.Consumer.Apply do
   @spec given_states(reference(), [{String.t(), String.t() | nil}]) ::
           :ok | {:error, Error.t()}
   def given_states(handle, states) do
-    each_ok(states, fn
+    Result.each_ok(states, fn
       {name, nil} -> native(Native.given(handle, name))
       {name, json} -> native(Native.given_with_params(handle, name, json))
     end)

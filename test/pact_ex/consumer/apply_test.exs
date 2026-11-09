@@ -260,6 +260,17 @@ defmodule PactEx.Consumer.ApplyTest do
       |> HTTP.with_request(:post, "/x", [headers: headers] ++ opts)
     end
 
+    test "two header keys that spell the same name after dashing are rejected" do
+      for make <- [&request_with/1, &response_with/1] do
+        assert {:error, %PactEx.Error{code: -101, message: message}} =
+                 Apply.validate(make.(%{:x_request_id => "1", "x-request-id" => "2"}))
+
+        assert message =~ ~s("x-request-id" more than once)
+      end
+
+      assert :ok = Apply.validate(request_with(%{:x_request_id => "1", "x_request_id" => "2"}))
+    end
+
     @empty %{"value" => []}
 
     test "rejects every shape that resolves to an empty list" do
