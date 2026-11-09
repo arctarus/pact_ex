@@ -127,4 +127,9 @@ defmodule PactEx.Native do
 
   @spec cleanup_plugins(pact()) :: boolean()
   def cleanup_plugins(_pact), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec verify(map()) ::
+          {:ok, %{exit_code: integer(), json: String.t(), output: String.t()}}
+          | {:error, ffi_error()}
+  def verify(_config), do: :erlang.nif_error(:nif_not_loaded)
 end

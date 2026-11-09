@@ -15,6 +15,10 @@ pact_ffi = "=0.5.12"
 pact_models = "=1.3.17"
 # The same parser pact_ffi uses on a body. Version 1 is already in Cargo.lock.
 serde_json = "1"
+# The verifier builds an HTTP client, which panics unless a rustls crypto
+# provider is installed. pact_ffi installs one only when its logger starts, and
+# the mock server when it starts. Same version and features as pact_ffi.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # rustler-precompiled-action picks the NIF version through these features.
 [features]

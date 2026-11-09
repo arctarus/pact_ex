@@ -38,7 +38,7 @@ pact_erlang parity for `pact_verifier`, plus transports.
 - Every new test support module lives under `PactEx.Test` (`test/support/test/*.ex` for the shared helpers, and `PactEx.Test.AnimalProvider` and the like), and tests alias it, because Credo's `AliasUsage` flags a nested name that is used without an alias. The older global modules (`PactFile`, `AnimalClient`, `PluginProcesses`, `CollidingRoot`) are listed in `TODO.md` for a later move. Do not move them in this plan.
 - Broker tests are tagged `:broker` and excluded unless `PACT_BROKER_URL` is set. Plugin tests keep plan 2's `:plugin` rule.
 - Every verification ends with pact-plugin-driver's `shutdown_plugins()` (`pact_verifier` `lib.rs`, unconditional), which kills every plugin process in the VM, HTTP-only verifications included. So a `verify/1` must never overlap a test that uses a plugin. In this repo every `:plugin` module is `async: false`, and ExUnit runs the `async: true` modules before the others, so the `async: true` verifier tests never overlap them. Keep it that way.
-- Test broker: `test/support/docker-compose.yml` runs `pactfoundation/pact-broker` on port 9292 with `PACT_BROKER_DATABASE_ADAPTER=sqlite` and `PACT_BROKER_DATABASE_NAME=/tmp/pact_broker.sqlite3`. Health check: `GET /diagnostic/status/heartbeat`, written as a compose `healthcheck:` block, because `docker compose up --wait` waits only for services that have one. Check which HTTP tool the image has (`wget` or `curl`) before writing the `test:` command.
+- Test broker: `test/support/docker-compose.yml` runs `pactfoundation/pact-broker` on port 9292 with `PACT_BROKER_DATABASE_ADAPTER=sqlite` and `PACT_BROKER_DATABASE_NAME=/tmp/pact_broker.sqlite3`. Health check: `GET /diagnostic/status/heartbeat`, written as a compose `healthcheck:` block, because `docker compose up --wait` waits only for services that have one. The image has `wget`, not `curl`, and `localhost` resolves to `::1` inside it while the broker listens on IPv4, so the command is `wget -q -O /dev/null http://127.0.0.1:9292/diagnostic/status/heartbeat`.
 
 ## Review Focus
 
@@ -143,6 +143,7 @@ Expected: FAIL with `PactEx.Native.verify/1 is undefined or private`.
 - [ ] **Step 3: Implement `verifier.rs`**
 
 One `#[rustler::nif(schedule = "DirtyIo")] fn verify(config: VerifyConfig)`. Inside `on_large_stack`, call in this order:
+0. Install the rustls `ring` crypto provider if none is set (`rustls` is a direct dependency with the same features as pact_ffi). Without it `execute` panics on a fresh VM (Task 1 spike), and returns 1 with an empty report that says `result: true`.
 1. `pactffi_verifier_new_for_application("pact_ex", app_version)`. It returns NULL only if it panicked: return `{:error, %{function: "pactffi_verifier_new_for_application", code: -1, ...}}` without calling `shutdown`. Then `set_provider_info`.
 2. `add_provider_transport` for each transport. The order matters: `set_provider_info` replaces the whole provider, transports included (`handle.rs` `update_provider_info`).
 3. `set_filter_info`, but only when a filter is set.
@@ -156,6 +157,8 @@ Coloured output is on by default. `strip_ansi` cleans only `output`, so without 
 A non-zero return from any `int`-returning setter returns `{:error, error}`, where `error` is read with `failure_with(<fn>, c, describe)` before `shutdown`, on the same thread. `broker_source_with_selectors` returns `-1` for a selector that is not valid JSON and stores no message, so `describe` gives `"a consumer version selector is not valid JSON"` for it. Build the `const char *const *` arrays from a `Vec<CString>` that stays alive for the whole call.
 
 `json` and `output` return NULL only if they panicked: `output` does when a line holds a NUL byte (`CString::new(...).unwrap()`), which a binary provider response can cause. Treat a NULL `output` as `""`. A NULL `json` returns `{:error, %{function: "pactffi_verifier_json", code: -1, ...}}`. Free each non-NULL string with `pactffi_string_delete`.
+
+A panic inside `execute` also returns 1. pact_ffi stores the panic message, so after a non-zero code compare `last_error` with `fallback_message`: a different message is returned as `{:error, ...}` (a failed verification stores none).
 
 `execute` returns 0 (verified), 1 (verification failed) or 2 (it could not run, for example a plugin failed to load). With 2, the report's `errors` is empty and the reason is only in `output`.
 

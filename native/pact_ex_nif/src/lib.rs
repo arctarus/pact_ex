@@ -10,6 +10,7 @@ mod messages;
 mod mock_server;
 mod plugins;
 mod stack;
+mod verifier;
 
 #[rustler::nif]
 fn version() -> String {
