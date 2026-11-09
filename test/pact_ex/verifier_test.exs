@@ -85,6 +85,52 @@ defmodule PactEx.VerifierTest do
       assert %{transports: []} = Options.to_native([provider: "p", message_providers: %{}], nil)
     end
 
+    test "a broker becomes the native broker source, with the tags of the verification" do
+      config =
+        Options.to_native(
+          [
+            provider: "p",
+            broker: [
+              url: "http://broker",
+              token: "t",
+              consumer_version_selectors: [%{"latest" => true}]
+            ],
+            provider_tags: ["prod"],
+            provider_branch: "main"
+          ],
+          nil
+        )
+
+      assert %{
+               url: "http://broker",
+               token: "t",
+               username: nil,
+               enable_pending: false,
+               provider_tags: ["prod"],
+               provider_branch: "main",
+               consumer_version_selectors: [~s({"latest":true})],
+               consumer_version_tags: []
+             } = config.broker
+
+      default = Options.to_native([provider: "p", broker: [url: "http://broker"]], nil)
+
+      assert default.broker.consumer_version_selectors ==
+               [~s({"mainBranch":true}), ~s({"deployedOrReleased":true})]
+    end
+
+    test "an invalid broker raises ArgumentError" do
+      for {broker, message} <- [
+            {[], ~r/needs a :url/},
+            {[url: "http://b", tokn: "t"], ~r/unknown keys \[:tokn\]/},
+            {[url: "http://b", consumer_version_selectors: ["latest"]], ~r/must be maps/},
+            {"http://b", ~r/must be a keyword list/}
+          ] do
+        assert_raise ArgumentError, message, fn ->
+          Options.to_native([provider: "p", broker: broker], nil)
+        end
+      end
+    end
+
     test "publishing needs the provider version" do
       assert %{publish: %{provider_version: "1.0.0", provider_tags: []}} =
                Options.to_native([provider: "p", publish: true, provider_version: "1.0.0"], nil)

@@ -75,6 +75,13 @@ defmodule PactEx.Verifier do
     * `:request_timeout` - milliseconds per request to the provider. Defaults to
       `5_000`.
     * `:disable_ssl_verification` - defaults to `false`.
+    * `:broker` - verify the pacts of a Pact Broker: a keyword list with `:url`
+      (required), `:token` or `:username` and `:password`, `:enable_pending`,
+      `:include_wip_pacts_since`, `:consumer_version_selectors` (a list of maps,
+      by default `mainBranch` and `deployedOrReleased`) and
+      `:consumer_version_tags`. The broker also uses `:provider_tags` and
+      `:provider_branch`. Here `:no_pacts_is_error` is checked by the verifier
+      itself.
     * `:publish`, `:provider_version`, `:provider_branch`, `:provider_tags` and
       `:build_url` - publish the results. `publish: true` needs
       `:provider_version`.

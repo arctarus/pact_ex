@@ -11,6 +11,7 @@ defmodule PactEx.Verifier.Options do
     files: [],
     dirs: [],
     urls: [],
+    broker: nil,
     state_handler: nil,
     state_change_url: nil,
     state_change_teardown: false,
@@ -29,6 +30,17 @@ defmodule PactEx.Verifier.Options do
     provider_tags: [],
     build_url: nil,
     no_pacts_is_error: true
+  ]
+
+  @broker_defaults [
+    url: nil,
+    token: nil,
+    username: nil,
+    password: nil,
+    enable_pending: false,
+    include_wip_pacts_since: nil,
+    consumer_version_selectors: [%{"mainBranch" => true}, %{"deployedOrReleased" => true}],
+    consumer_version_tags: []
   ]
 
   @doc """
@@ -51,12 +63,33 @@ defmodule PactEx.Verifier.Options do
     check_fun!(opts, :state_handler, 3)
     check_fun!(opts, :fallback_message_provider, 1)
     check_message_providers!(opts[:message_providers])
+    opts = Keyword.update!(opts, :broker, &broker!/1)
 
     if opts[:publish] == true and opts[:provider_version] in [nil, ""] do
       raise ArgumentError, "publish: true requires :provider_version"
     end
 
     opts
+  end
+
+  defp broker!(nil), do: nil
+
+  defp broker!(broker) when is_list(broker) do
+    broker = Keyword.validate!(broker, @broker_defaults)
+
+    unless is_binary(broker[:url]) and broker[:url] != "" do
+      raise ArgumentError, "option :broker needs a :url"
+    end
+
+    unless Enum.all?(broker[:consumer_version_selectors], &is_map/1) do
+      raise ArgumentError, "the :consumer_version_selectors of :broker must be maps"
+    end
+
+    broker
+  end
+
+  defp broker!(other) do
+    raise ArgumentError, "option :broker must be a keyword list, got: #{inspect(other)}"
   end
 
   defp check_fun!(opts, key, arity) do
@@ -143,7 +176,7 @@ defmodule PactEx.Verifier.Options do
       files: opts[:files],
       dirs: opts[:dirs],
       urls: Enum.map(opts[:urls], &url_source/1),
-      broker: nil,
+      broker: broker(opts),
       no_pacts_is_error: opts[:no_pacts_is_error]
     }
   end
@@ -175,6 +208,26 @@ defmodule PactEx.Verifier.Options do
       "http://127.0.0.1:#{port}/_pact/state"
     else
       opts[:state_change_url]
+    end
+  end
+
+  # The provider tags and the branch are the ones of the verification, which
+  # the broker uses to pick the pacts too.
+  defp broker(opts) do
+    if broker = opts[:broker] do
+      %{
+        url: broker[:url],
+        username: broker[:username],
+        password: broker[:password],
+        token: broker[:token],
+        enable_pending: broker[:enable_pending],
+        include_wip_pacts_since: broker[:include_wip_pacts_since],
+        provider_tags: opts[:provider_tags],
+        provider_branch: opts[:provider_branch],
+        consumer_version_selectors:
+          Enum.map(broker[:consumer_version_selectors], &JSON.encode!/1),
+        consumer_version_tags: broker[:consumer_version_tags]
+      }
     end
   end
 
