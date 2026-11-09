@@ -121,14 +121,16 @@ impl Encoder for Outcome {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use pact_ffi::mock_server::handles::{
         pactffi_free_pact_handle, pactffi_given_with_params, pactffi_new_interaction,
         pactffi_new_pact,
     };
 
-    fn fail_given_with_params() -> i64 {
+    /// Makes `pactffi_given_with_params` fail and leaves its message stored on
+    /// this thread. Returns the code, which is 2. Shared with the logger tests.
+    pub(crate) fn fail_given_with_params() -> i64 {
         let consumer = CString::new("error-test-consumer").unwrap();
         let provider = CString::new("error-test-provider").unwrap();
         let description = CString::new("an interaction").unwrap();

@@ -142,21 +142,7 @@ mod tests {
 
     #[test]
     fn failure_keeps_a_message_stored_by_pact_ffi() {
-        // Store a message the way pact_ffi does, via a failing call on this thread.
-        let code = {
-            use pact_ffi::mock_server::handles::{
-                pactffi_given_with_params, pactffi_new_interaction, pactffi_new_pact,
-            };
-            let consumer = std::ffi::CString::new("c").unwrap();
-            let provider = std::ffi::CString::new("p").unwrap();
-            let description = std::ffi::CString::new("d").unwrap();
-            let state = std::ffi::CString::new("s").unwrap();
-            let params = std::ffi::CString::new("not json").unwrap();
-            let pact = pactffi_new_pact(consumer.as_ptr(), provider.as_ptr());
-            let interaction = pactffi_new_interaction(pact, description.as_ptr());
-            clear_error();
-            pactffi_given_with_params(interaction, state.as_ptr(), params.as_ptr())
-        };
+        let code = crate::error::tests::fail_given_with_params();
         assert_eq!(code, 2);
         let Outcome::Err(error) = failure(ATTACH, -6, |code| attach_message(code, "file /x"))
         else {
