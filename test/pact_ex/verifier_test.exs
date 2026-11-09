@@ -64,6 +64,27 @@ defmodule PactEx.VerifierTest do
              ]
     end
 
+    test "message providers add the message transport of the endpoint" do
+      transport = %{protocol: "message", port: 4321, path: "/_pact/messages", scheme: "http"}
+      fun = fn _ -> %{} end
+
+      for opts <- [[message_providers: %{"d" => fun}], [fallback_message_provider: fun]] do
+        assert %{transports: [^transport]} = Options.to_native([provider: "p"] ++ opts, 4321)
+      end
+
+      assert %{transports: [%{protocol: "grpc"}, ^transport]} =
+               Options.to_native(
+                 [
+                   provider: "p",
+                   transports: [%{protocol: "grpc", port: 1}],
+                   message_providers: %{"d" => fun}
+                 ],
+                 4321
+               )
+
+      assert %{transports: []} = Options.to_native([provider: "p", message_providers: %{}], nil)
+    end
+
     test "publishing needs the provider version" do
       assert %{publish: %{provider_version: "1.0.0", provider_tags: []}} =
                Options.to_native([provider: "p", publish: true, provider_version: "1.0.0"], nil)

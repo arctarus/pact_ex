@@ -37,6 +37,20 @@ defmodule PactEx.Verifier do
   `verify/1` checks only when it needs the server. To call your own state change
   endpoint instead, give `:state_change_url`.
 
+  ## Message providers
+
+  `:message_providers` maps a message description to a function of arity 1. It
+  gets the provider states of the message, a list of `%{name: String.t(),
+  params: map()}`, and returns the message. That is `{contents, metadata}`, or
+  just `contents`. Contents are a map or list (sent as JSON), a binary, or
+  `{binary, content_type}`. `:fallback_message_provider` answers every
+  description that has no function. A description with neither is a failed
+  interaction that names it, as does a function that raises.
+
+  The verifier asks the endpoint for each message at the host of
+  `:provider_url`, so leave it at its default, `127.0.0.1`, when you verify
+  messages. A pact can mix HTTP interactions and messages.
+
   ## Options
 
     * `:provider` - the provider name in the pacts. Required.
@@ -50,6 +64,7 @@ defmodule PactEx.Verifier do
     * `:transports` - extra provider transports, such as
       `[%{protocol: "grpc", port: 50051}]`. Each map can also have `:path` and
       `:scheme`.
+    * `:message_providers` and `:fallback_message_provider` - see above.
     * `:state_handler` or `:state_change_url` - see above. Giving both is an
       error. `:state_change_teardown` (default `false`) also calls it after each
       interaction.

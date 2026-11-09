@@ -128,7 +128,8 @@ defmodule PactEx.Verifier.Options do
       provider_host: uri.host || "127.0.0.1",
       provider_port: uri.port || 0,
       provider_path: uri.path || "/",
-      transports: Enum.map(opts[:transports], &transport/1),
+      transports:
+        Enum.map(opts[:transports], &transport/1) ++ message_transport(opts, endpoint_port),
       filter_description: opts[:filter_description],
       filter_state: opts[:filter_state],
       filter_no_state: opts[:filter_no_state],
@@ -156,6 +157,17 @@ defmodule PactEx.Verifier.Options do
       path: Map.get(transport, :path),
       scheme: Map.get(transport, :scheme)
     }
+  end
+
+  # The verifier sends a message request to the "message" transport, over HTTP,
+  # at the host of the provider URL. That host is 127.0.0.1 unless you set
+  # `:provider_url`.
+  defp message_transport(opts, port) do
+    if opts[:message_providers] != %{} or opts[:fallback_message_provider] != nil do
+      [%{protocol: "message", port: port, path: "/_pact/messages", scheme: "http"}]
+    else
+      []
+    end
   end
 
   defp state_change_url(opts, port) do
