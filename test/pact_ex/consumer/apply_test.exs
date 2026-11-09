@@ -136,6 +136,14 @@ defmodule PactEx.Consumer.ApplyTest do
   describe "validate/1: values and names that cannot be applied" do
     # `validate/1` only plans: it makes no FFI builder call. So an error here
     # proves the check runs before any builder call.
+    test "a query matcher map that repeats a key is rejected, naming the key" do
+      matcher = %{"pact:matcher:type" => "regex", "value" => "1", :regex => "a", "regex" => "b"}
+      i = HTTP.interaction("q") |> HTTP.with_request(:get, "/q", query: %{"id" => matcher})
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} = Apply.validate(i)
+      assert message =~ ~s("id")
+    end
+
     test "a nil or unsupported query or header value is rejected, naming the key" do
       for value <- [nil, {:a}, :atom, ["a", nil], %{:a => 1, "a" => 2}] do
         request_q = HTTP.interaction("v") |> HTTP.with_request(:get, "/v", query: %{"k" => value})

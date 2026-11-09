@@ -1989,6 +1989,21 @@ defmodule PactEx.ConsumerTest do
       end
     end
 
+    test "a content type that is not valid UTF-8 is skipped, so the XML header decides",
+         %{pact: pact} do
+      i =
+        xml_interaction([],
+          headers: %{"Content-Type" => "application/xml"},
+          content_type: <<255, 254>>,
+          body: @xml_panic_shape
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "$.root"
+    end
+
     test "a valid description with an unparseable explicit type is served as XML by the header",
          %{pact: pact, tmp_dir: dir} do
       i =
