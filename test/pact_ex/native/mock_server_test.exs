@@ -1,4 +1,3 @@
-# test/pact_ex/native/mock_server_test.exs
 defmodule PactEx.Native.MockServerTest do
   use ExUnit.Case, async: true
   alias PactEx.Native
@@ -195,12 +194,6 @@ defmodule PactEx.Native.MockServerTest do
 
       assert {:error, %{function: ^fun, code: -100}} =
                Native.create_mock_server(pact, "127.0.0.1", 0, "http", "{}\0")
-    end
-
-    test "create_mock_server rejects an out-of-range port", %{pact: pact} do
-      assert_raise ArgumentError, fn ->
-        Native.create_mock_server(pact, "127.0.0.1", 70_000, "http", nil)
-      end
     end
 
     test "port-taking NIFs reject ports outside 0..65535", %{pact: pact} do

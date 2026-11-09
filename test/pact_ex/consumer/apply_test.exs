@@ -134,8 +134,8 @@ defmodule PactEx.Consumer.ApplyTest do
   end
 
   describe "validate/1: values and names that cannot be applied" do
-    # `validate/1` only plans: it makes no native call. So an error here proves
-    # the check runs before any native call.
+    # `validate/1` only plans: it makes no FFI builder call. So an error here
+    # proves the check runs before any builder call.
     test "a nil or unsupported query or header value is rejected, naming the key" do
       for value <- [nil, {:a}, :atom, ["a", nil], %{:a => 1, "a" => 2}] do
         request_q = HTTP.interaction("v") |> HTTP.with_request(:get, "/v", query: %{"k" => value})
