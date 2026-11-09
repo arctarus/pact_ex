@@ -33,21 +33,44 @@ mod tests {
     }
 
     #[test]
-    fn runs_on_another_thread_with_a_large_stack() {
+    fn runs_on_another_thread() {
         let caller = std::thread::current().id();
+        assert_ne!(on_large_stack(|| std::thread::current().id()), caller);
+    }
 
-        let (worker, sum) = on_large_stack(|| {
-            // 4 MiB would overflow the default 2 MiB test-thread stack.
+    const CHILD_ENV: &str = "PACT_EX_STACK_TEST_CHILD";
+
+    /// The body of the stack check. It overflows the 2 MiB default stack, and
+    /// an overflow aborts the process, so `a_4_mib_buffer_fits_on_the_large_stack`
+    /// runs it in a child process. Run on its own it does nothing.
+    #[test]
+    fn child_4_mib_buffer() {
+        if std::env::var_os(CHILD_ENV).is_none() {
+            return;
+        }
+
+        let sum = on_large_stack(|| {
             let buf = [1u8; 4 * 1024 * 1024];
             let buf = std::hint::black_box(&buf);
-            (
-                std::thread::current().id(),
-                buf.iter().map(|&b| b as usize).sum::<usize>(),
-            )
+            buf.iter().map(|&b| b as usize).sum::<usize>()
         });
-
-        assert_ne!(worker, caller);
         assert_eq!(sum, 4 * 1024 * 1024);
+    }
+
+    /// A regression (a thread without the 8 MiB stack) would abort the test
+    /// binary. In a child process it is a failed assertion on the exit status.
+    /// `RUST_MIN_STACK` is removed, because a value of 4 MiB or more would hide
+    /// the regression.
+    #[test]
+    fn a_4_mib_buffer_fits_on_the_large_stack() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "stack::tests::child_4_mib_buffer", "--nocapture"])
+            .env(CHILD_ENV, "1")
+            .env_remove("RUST_MIN_STACK")
+            .status()
+            .unwrap();
+
+        assert!(status.success(), "the child failed: {status}");
     }
 
     #[test]

@@ -27,7 +27,8 @@ defmodule PactEx.Native.LargeBodyTest do
   # Runs `fun` with microstate accounting on and returns the busy time it
   # added to the dirty CPU schedulers.
   defp dirty_cpu_busy_during(fun) do
-    :erlang.system_flag(:microstate_accounting, true)
+    previous = :erlang.system_flag(:microstate_accounting, true)
+    on_exit(fn -> :erlang.system_flag(:microstate_accounting, previous) end)
     before = PactEx.SchedulerStats.busy(:dirty_cpu_scheduler)
     result = fun.()
     {result, PactEx.SchedulerStats.busy(:dirty_cpu_scheduler) - before}

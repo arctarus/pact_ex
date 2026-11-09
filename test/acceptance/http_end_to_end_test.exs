@@ -194,13 +194,13 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
 
     assert rules["$.gender"]["matchers"] == [%{"match" => "regex", "regex" => "(male|female)"}]
 
-    assert [
+    assert rules["$.attributes"]["matchers"] == [
              %{
                "match" => "eachKey",
-               "rules" => [%{"match" => "regex", "regex" => "(happy|ferocious)"}]
+               "rules" => [%{"match" => "regex", "regex" => "(happy|ferocious)"}],
+               "value" => ~s({"happy":true})
              }
-           ] =
-             rules["$.attributes"]["matchers"]
+           ]
   end
 
   defp run_find_all_alligators(pact, dir) do

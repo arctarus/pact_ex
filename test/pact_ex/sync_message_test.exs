@@ -65,8 +65,14 @@ defmodule PactEx.SyncMessageTest do
 
     test "builders raise ArgumentError on unknown options" do
       sm = SyncMessage.new("m")
-      assert_raise ArgumentError, fn -> SyncMessage.with_request(sm, %{}, foo: 1) end
-      assert_raise ArgumentError, fn -> SyncMessage.will_respond_with(sm, %{}, foo: 1) end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:foo\]/, fn ->
+        SyncMessage.with_request(sm, %{}, foo: 1)
+      end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:foo\]/, fn ->
+        SyncMessage.will_respond_with(sm, %{}, foo: 1)
+      end
     end
   end
 
@@ -391,7 +397,7 @@ defmodule PactEx.SyncMessageTest do
     end
 
     test "options are validated", %{pact: pact} do
-      assert_raise ArgumentError, fn ->
+      assert_raise ArgumentError, ~r/unknown keys \[:foo\].*:transport_config/, fn ->
         SyncMessage.run(pact, user_message(), fn _ -> :ok end, foo: 1)
       end
 

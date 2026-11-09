@@ -262,7 +262,10 @@ defmodule PactEx.ConsumerTest do
 
     test "rejects unknown options", %{pact: pact} do
       i = simple("opts", "/opts")
-      assert_raise ArgumentError, fn -> Consumer.run(pact, [i], fn _ -> :ok end, bad(hots: 1)) end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:hots\].*\[:host, :port\]/, fn ->
+        Consumer.run(pact, [i], fn _ -> :ok end, bad(hots: 1))
+      end
     end
 
     test "supports several interactions in one pact", %{pact: pact, tmp_dir: dir} do
@@ -983,6 +986,20 @@ defmodule PactEx.ConsumerTest do
 
       assert message =~ "Content-Type"
     end
+
+    test "an atom and a string Content-Type name are rejected", %{pact: pact} do
+      i =
+        HTTP.interaction("atom and string content type")
+        |> HTTP.with_request(:get, "/d")
+        |> HTTP.will_respond_with(200,
+          headers: %{:content_type => "a/b", "Content-Type" => "text/plain"}
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "Content-Type"
+    end
   end
 
   describe "run/4 Content-Type header that resolves to an empty list" do
@@ -1277,6 +1294,11 @@ defmodule PactEx.ConsumerTest do
 
       assert written["response"]["headers"]["x-out-id"] == ["o"]
       assert written["response"]["headers"]["Content-Type"] == ["text/plain"]
+
+      # pact_ffi adds Content-Type from a text body anyway, so check the whole
+      # key set: no second spelling of it.
+      assert Map.keys(written["response"]["headers"]) |> Enum.sort() ==
+               ["Content-Type", "x-out-id"]
     end
 
     test "an atom header name with an underscore canonicalises Content-Type", %{pact: pact} do
@@ -1970,6 +1992,21 @@ defmodule PactEx.ConsumerTest do
       end
     end
 
+    test "a content type that is not valid UTF-8 is skipped, so the XML header decides",
+         %{pact: pact} do
+      i =
+        xml_interaction([],
+          headers: %{"Content-Type" => "application/xml"},
+          content_type: <<255, 254>>,
+          body: @xml_panic_shape
+        )
+
+      assert {:error, %PactEx.Error{code: -101, message: message}} =
+               Consumer.start_mock_server(pact, [i])
+
+      assert message =~ "$.root"
+    end
+
     test "a valid description with an unparseable explicit type is served as XML by the header",
          %{pact: pact, tmp_dir: dir} do
       i =
@@ -2554,7 +2591,10 @@ defmodule PactEx.ConsumerTest do
       i = simple("range", "/range")
       assert_raise ArgumentError, fn -> Consumer.start_mock_server(pact, [i], port: 70_000) end
       assert_raise ArgumentError, fn -> Consumer.start_mock_server(pact, [i], port: -1) end
-      assert_raise ArgumentError, fn -> Consumer.start_mock_server(pact, [i], bad(hots: "x")) end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:hots\]/, fn ->
+        Consumer.start_mock_server(pact, [i], bad(hots: "x"))
+      end
     end
 
     test "rejects a NUL byte in the consumer, provider or description", %{tmp_dir: dir} do

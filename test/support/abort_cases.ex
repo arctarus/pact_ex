@@ -440,6 +440,7 @@ defmodule PactEx.AbortCases do
       {"json text, non-empty", ct_header.(~s({"value":["application/json"]}))},
       {"json text, not an object", ct_header.("[]")},
       {"list of strings", ct_header.(["application/json", "extra"])},
+      {"list of a non-empty array and a string", ct_header.([%{"value" => ["a"]}, "text/plain"])},
       {"another header with an empty array", %{"X-Other" => empty}}
     ]
 

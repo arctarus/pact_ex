@@ -550,6 +550,15 @@ mix deps.get
 mix test
 ```
 
+Without the protobuf plugin installed, the tests that load a missing plugin make
+the plugin driver fetch the plugin index from GitHub. That request has no
+timeout. To keep the tests offline, as CI does, point the proxy at a closed
+port. Set it in the shell, because the NIF reads it when the VM starts:
+
+```sh
+HTTPS_PROXY=http://127.0.0.1:9 NO_PROXY=127.0.0.1,localhost,::1 mix test
+```
+
 CI also runs Credo and Dialyzer. `mix precommit` runs the Elixir checks of CI
 in one go: compile with warnings as errors, the formatter check, Credo,
 Dialyzer and the tests. To run it before every push, enable the hook in

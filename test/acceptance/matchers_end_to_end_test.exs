@@ -35,18 +35,21 @@ defmodule PactEx.Acceptance.MatchersEndToEndTest do
     {"include/1", include("ell"), "say hello there", [%{"match" => "include", "value" => "ell"}]}
   ]
 
+  # {name, matcher, the example the mock server returns}. The recorded rule is
+  # the one of the request case with the same name.
   @response_cases [
-    {"like/1", like("Ann"), "Ann", "type"},
-    {"each_like/2 with min", each_like("x", min: 2), ["x", "x"], "type"},
-    {"regex/2", regex("abc-123", "^abc-\\d+$"), "abc-123", "regex"},
-    {"each_key/2", each_key(%{"k1" => 1}, "^k\\d$"), %{"k1" => 1}, "eachKey"},
-    {"integer/1", integer(1), 1, "integer"},
-    {"decimal/1", decimal(1.5), 1.5, "decimal"},
-    {"boolean/1", boolean(true), true, "boolean"},
-    {"datetime/2", datetime("2026-10-22T10:00:00+00:00", @iso), "2026-10-22T10:00:00+00:00",
-     "datetime"},
-    {"include/1", include("ell"), "ell", "include"}
+    {"like/1", like("Ann"), "Ann"},
+    {"each_like/2 with min", each_like("x", min: 2), ["x", "x"]},
+    {"regex/2", regex("abc-123", "^abc-\\d+$"), "abc-123"},
+    {"each_key/2", each_key(%{"k1" => 1}, "^k\\d$"), %{"k1" => 1}},
+    {"integer/1", integer(1), 1},
+    {"decimal/1", decimal(1.5), 1.5},
+    {"boolean/1", boolean(true), true},
+    {"datetime/2", datetime("2026-10-22T10:00:00+00:00", @iso), "2026-10-22T10:00:00+00:00"},
+    {"include/1", include("ell"), "ell"}
   ]
+
+  @expected_rules Map.new(@request_cases, fn {name, _matcher, _value, rules} -> {name, rules} end)
 
   defp pact(dir), do: PactEx.new("matchers-consumer", "matchers-provider", pact_dir: dir)
 
@@ -83,7 +86,7 @@ defmodule PactEx.Acceptance.MatchersEndToEndTest do
   end
 
   describe "response-side matchers return the example" do
-    for {name, matcher, example, match} <- @response_cases do
+    for {name, matcher, example} <- @response_cases do
       test name, %{tmp_dir: dir} do
         interaction =
           HTTP.interaction("matcher in response body")
@@ -96,7 +99,8 @@ defmodule PactEx.Acceptance.MatchersEndToEndTest do
                    assert resp.body == %{"v" => unquote(Macro.escape(example))}
                  end)
 
-        assert [%{"match" => unquote(match)} | _] = rules(dir, "response", "$.v")
+        assert rules(dir, "response", "$.v") ==
+                 unquote(Macro.escape(Map.fetch!(@expected_rules, name)))
       end
     end
   end

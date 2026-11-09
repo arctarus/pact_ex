@@ -230,7 +230,10 @@ defmodule PactEx.MessageTest do
 
   test "run/4 takes no options", %{pact: pact} do
     msg = Message.new("opts") |> Message.with_contents(%{"a" => 1})
-    assert_raise ArgumentError, fn -> Message.run(pact, msg, fn _ -> :ok end, foo: 1) end
+
+    assert_raise ArgumentError, ~r/unknown keys \[:foo\].*allowed keys are: \[\]/, fn ->
+      Message.run(pact, msg, fn _ -> :ok end, foo: 1)
+    end
   end
 
   describe "builders" do
@@ -253,7 +256,9 @@ defmodule PactEx.MessageTest do
     end
 
     test "with_contents/3 rejects unknown options" do
-      assert_raise ArgumentError, fn -> Message.with_contents(Message.new("m"), %{}, foo: 1) end
+      assert_raise ArgumentError, ~r/unknown keys \[:foo\].*\[:content_type\]/, fn ->
+        Message.with_contents(Message.new("m"), %{}, foo: 1)
+      end
     end
   end
 end

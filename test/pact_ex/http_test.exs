@@ -26,7 +26,9 @@ defmodule PactEx.HTTPTest do
     end
 
     test "rejects unknown options" do
-      assert_raise ArgumentError, fn -> PactEx.new("c", "p", pactdir: "x") end
+      assert_raise ArgumentError, ~r/unknown keys \[:pactdir\].*\[:spec, :pact_dir\]/, fn ->
+        PactEx.new("c", "p", pactdir: "x")
+      end
     end
 
     test "rejects a :pact_dir that is not a non-empty string" do
@@ -162,7 +164,7 @@ defmodule PactEx.HTTPTest do
     end
 
     test "rejects unknown options" do
-      assert_raise ArgumentError, fn ->
+      assert_raise ArgumentError, ~r/unknown keys \[:params\]/, fn ->
         HTTP.interaction("x") |> HTTP.with_request(:get, "/", params: %{})
       end
     end
@@ -198,7 +200,7 @@ defmodule PactEx.HTTPTest do
     end
 
     test "rejects unknown options" do
-      assert_raise ArgumentError, fn ->
+      assert_raise ArgumentError, ~r/unknown keys \[:status\]/, fn ->
         HTTP.interaction("x") |> HTTP.will_respond_with(200, status: 201)
       end
     end

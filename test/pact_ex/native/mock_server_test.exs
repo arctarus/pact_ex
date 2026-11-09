@@ -1,4 +1,3 @@
-# test/pact_ex/native/mock_server_test.exs
 defmodule PactEx.Native.MockServerTest do
   use ExUnit.Case, async: true
   alias PactEx.Native
@@ -46,6 +45,52 @@ defmodule PactEx.Native.MockServerTest do
     :ok = Native.with_binary_body(i, :response, "application/octet-stream", <<0, 255, 1>>)
     {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
     assert %{body: <<0, 255, 1>>} = Req.get!("http://127.0.0.1:#{port}/bin", decode_body: false)
+    assert Native.cleanup_mock_server(port)
+  end
+
+  test "a request body is matched, text and binary" do
+    pact = Native.new_pact("native-consumer", "native-provider")
+
+    text = Native.new_interaction(pact, "text request")
+    :ok = Native.with_request(text, "POST", "/text")
+    :ok = Native.with_body(text, :request, "text/plain", "ping")
+    :ok = Native.response_status(text, "204")
+
+    binary = Native.new_interaction(pact, "binary request")
+    :ok = Native.with_request(binary, "POST", "/bin")
+    :ok = Native.with_binary_body(binary, :request, "application/octet-stream", <<0, 255, 1>>)
+    :ok = Native.response_status(binary, "204")
+
+    {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
+    base = "http://127.0.0.1:#{port}"
+
+    assert Req.post!(base <> "/text", body: "ping", headers: [{"content-type", "text/plain"}]).status ==
+             204
+
+    assert Req.post!(base <> "/bin",
+             body: <<0, 255, 1>>,
+             headers: [{"content-type", "application/octet-stream"}]
+           ).status == 204
+
+    assert Native.mock_server_matched(port)
+    assert Native.cleanup_mock_server(port)
+  end
+
+  test "a request body that differs is a mismatch" do
+    pact = Native.new_pact("native-consumer", "native-provider")
+    i = Native.new_interaction(pact, "text request")
+    :ok = Native.with_request(i, "POST", "/text")
+    :ok = Native.with_body(i, :request, "text/plain", "ping")
+    :ok = Native.response_status(i, "204")
+    {:ok, port} = Native.create_mock_server(pact, "127.0.0.1", 0, "http", nil)
+
+    Req.post!("http://127.0.0.1:#{port}/text",
+      body: "pong",
+      headers: [{"content-type", "text/plain"}],
+      retry: false
+    )
+
+    refute Native.mock_server_matched(port)
     assert Native.cleanup_mock_server(port)
   end
 
@@ -195,12 +240,6 @@ defmodule PactEx.Native.MockServerTest do
 
       assert {:error, %{function: ^fun, code: -100}} =
                Native.create_mock_server(pact, "127.0.0.1", 0, "http", "{}\0")
-    end
-
-    test "create_mock_server rejects an out-of-range port", %{pact: pact} do
-      assert_raise ArgumentError, fn ->
-        Native.create_mock_server(pact, "127.0.0.1", 70_000, "http", nil)
-      end
     end
 
     test "port-taking NIFs reject ports outside 0..65535", %{pact: pact} do
