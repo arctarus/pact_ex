@@ -79,6 +79,17 @@ jobs:
         env:
           MIX_ENV: test
 
+      # The :broker tests need a Pact Broker. Docker service containers are
+      # job-wide and only work on Linux runners, and this job also runs on
+      # macOS, so the broker is a compose file that is started on Linux only.
+      # On macOS PACT_BROKER_URL stays unset and the :broker tests are
+      # excluded. The URL has an IP, so the proxy settings below never apply.
+      - if: runner.os == 'Linux'
+        run: docker compose -f test/support/docker-compose.yml up -d --wait
+
+      - if: runner.os == 'Linux'
+        run: echo "PACT_BROKER_URL=http://127.0.0.1:9292" >> "$GITHUB_ENV"
+
       # Includes the abort matrix (test/abort_matrix_test.exs, tag
       # :abort_matrix), which runs each risky input in its own OS process.
       #

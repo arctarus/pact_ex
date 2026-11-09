@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Provider verification: `PactEx.Verifier.verify/1` and `verify!/1`, with
+  pacts from files, directories, URLs or a Pact Broker. Provider states go
+  through a `:state_handler` function (or your own `:state_change_url`), message
+  providers through `:message_providers`, and plugin transports such as gRPC
+  through `:transports`. Results can be published to the broker. A failing
+  verification returns a `PactEx.VerificationError` with the report and the
+  reasons that your callbacks gave. A verification that ran no interaction is an
+  error, for every source. The state handler and the message providers need the
+  optional dependencies `:plug` and `:bandit`.
 - `SyncMessage.run/4` returns a `-101` error when `with_plugin_contents/2` is
   combined with `with_request/3` or `will_respond_with/3`. It used to drop the
   request and the responses without a word.

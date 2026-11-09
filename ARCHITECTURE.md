@@ -6,7 +6,7 @@ This document describes how PactEx is built and how a consumer test flows from y
 
 PactEx is a Rustler NIF over [`pact_ffi`](https://github.com/pact-foundation/pact-reference/tree/master/rust/pact_ffi) 0.5.12, the Rust library behind most Pact implementations. The NIF crate (`native/pact_ex_nif`) depends on `pact_ffi` as a regular Rust crate and calls its `pactffi_*` functions directly. There is no C code and no downloaded `.a` file. Users get a precompiled NIF through `rustler_precompiled`.
 
-The current release covers HTTP consumer tests: building interactions, running them against a mock server, and writing the pact file. Messages, plugins (gRPC) and provider verification are planned (see [Roadmap](#roadmap)).
+PactEx covers consumer tests (HTTP, asynchronous and synchronous messages, Pact plugins and a gRPC mock transport) and provider verification (`PactEx.Verifier`: HTTP, message and plugin transports, from files, directories, URLs or a Pact Broker).
 
 ## High-Level Architecture
 
@@ -169,7 +169,13 @@ end)
 
 ### Provider workflow
 
-Not implemented yet. Provider verification is planned (see [Roadmap](#roadmap)).
+`PactEx.Verifier.verify/1`:
+
+1. **Options.** `Verifier.Options.validate!/1` checks the options and fills in the defaults, and `to_native/2` turns them into the config map of the NIF. An invalid option raises before anything starts.
+2. **Endpoint.** With a `:state_handler`, `:message_providers` or `:fallback_message_provider`, `Verifier.EndpointServer` starts `Verifier.Endpoint`, a Plug on Bandit bound to `127.0.0.1` on a free port. It serves `POST /_pact/state` for provider states and `POST /_pact/messages` for the `message` transport. Both modules compile only when the optional `:plug` and `:bandit` dependencies are present. A failed callback answers 422, never 5xx: pact_verifier retries a 5xx state change for minutes. It also drops the body of a failed one, so the endpoint sends the reason to the process that called `verify/1`.
+3. **One native call.** `Native.verify/1` is a single dirty IO NIF on a large-stack thread. It installs the rustls crypto provider if none is set, builds the `VerifierHandle`, applies every setting in order, executes, reads the JSON report and the output, and shuts the handle down. No verifier handle reaches Elixir. It reports a panic inside `execute` as an error, because that also returns 1 with an empty report.
+4. **Stop.** The endpoint is always stopped, and the reasons that its callbacks gave are collected from the mailbox.
+5. **Result.** Exit code 0 is `:ok`, unless nothing was verified and `no_pacts_is_error` is on. Anything else is a `PactEx.VerificationError` with the exit code, the report, the output and the callback reasons.
 
 ## Threading and Safety
 
@@ -222,6 +228,7 @@ Not implemented yet. Provider verification is planned (see [Roadmap](#roadmap)).
   - `spec` (`:v2`, `:v3`, `:v4`; default `:v4`);
   - `pact_dir` (default `"pacts"`).
 - **Mock server:** `host` (default `"127.0.0.1"`) and `port` (default `0`, OS-assigned) in `start_mock_server/3` and `run/4`.
+- **Verifier:** `Native.verify/1` is a DirtyIo NIF whose whole body runs inside `on_large_stack`, and it always shuts the verifier handle down. A spike on Linux x86_64 did not reproduce the segfault that pact_erlang reported, with the verifier on the scheduler thread or on the large stack (see the design spec). Every verification ends with the plugin driver's `shutdown_plugins()`, which stops every plugin process in the VM.
 - **Logging:** `PactEx.Log.init(level: ..., sink: :stdout | :stderr | {:file, path})`.
 - **Build:** `PACT_EX_BUILD=1` builds from source.
 
@@ -233,12 +240,14 @@ Not implemented yet. Provider verification is planned (see [Roadmap](#roadmap)).
 | `test/pact_ex/native/` | The NIFs against the real pact_ffi: success and error paths, large bodies, mock server queries. `scheduler_test.exs` checks that builder NIFs run on dirty IO schedulers, measured with microstate accounting. |
 | `test/pact_ex/` | Builders, matchers, `Apply`, `BodyCheck`, `Consumer`, `MockServer`, `Log`, end to end with a real mock server, Req and checks of the pact file. |
 | `test/acceptance/` | The pact_erlang HTTP parity suite, an end-to-end test per matcher, concurrent writes of the same pact file. |
+| `test/pact_ex/verifier*` | The verifier options, the endpoint (Plug.Test, no NIF), the endpoint server and `PactEx.VerificationError`. |
+| `test/acceptance/*_provider_test.exs`, `broker_test.exs` | `verify/1` end to end: an HTTP provider with provider states, message providers, a gRPC provider through the protobuf plugin, and a Pact Broker (tag `:broker`, needs `PACT_BROKER_URL`, see `test/support/docker-compose.yml`). |
 | `test/abort_matrix_test.exs` | Risky inputs, each in its own OS process, with a pinned outcome. |
 
 ## Roadmap
 
 Plans live in `docs/superpowers/plans/`:
 - **Plan 2:** async and sync messages, Pact plugins (`pactffi_using_plugin`, `pactffi_interaction_contents`) and the gRPC mock transport through the protobuf plugin.
-- **Plan 3:** provider verification from files, directories, URLs or a Pact Broker. It covers state change callbacks and message providers through an internal Plug endpoint, publishing results, and plugin transports.
+- **Plan 3:** provider verification from files, directories, URLs or a Pact Broker. It covers state change callbacks and message providers through an internal Plug endpoint, publishing results, and plugin transports. Done, unreleased.
 
 Open follow-ups are tracked in `TODO.md`.
