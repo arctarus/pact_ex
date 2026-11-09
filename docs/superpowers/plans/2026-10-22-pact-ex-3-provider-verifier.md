@@ -310,7 +310,7 @@ git commit -m "feat: add internal endpoint for provider states and message provi
 ### Task 3: `PactEx.Verifier.verify/1` for HTTP providers
 
 **Files:**
-- Create: `lib/pact_ex/verifier.ex`, `lib/pact_ex/verifier/options.ex`, `lib/pact_ex/verification_error.ex`, `test/support/animal_provider.ex`
+- Create: `lib/pact_ex/verifier.ex`, `lib/pact_ex/verifier/options.ex`, `lib/pact_ex/verification_error.ex`, `test/support/test/animal_provider.ex`
 - Test: `test/pact_ex/verifier_test.exs`, `test/acceptance/http_provider_test.exs`
 
 **Interfaces:**
@@ -347,7 +347,7 @@ git commit -m "feat: add internal endpoint for provider states and message provi
 
 - [ ] **Step 1: Write the failing tests**
 
-`test/support/animal_provider.ex` is a `Plug.Router` that implements the four animal endpoints from plan 1's acceptance suite:
+`test/support/test/animal_provider.ex` is a `Plug.Router` that implements the four animal endpoints from plan 1's acceptance suite:
 - `GET /animals/:name`: 200 JSON for names in an Agent-backed store, 404 `{"error":"not_found"}` otherwise.
 - `POST /animals`: 201.
 - `GET /animals?type=`: 200 `{"animals": [...]}`.
@@ -370,7 +370,7 @@ defmodule PactEx.Acceptance.HttpProviderTest do
 
   setup %{tmp_dir: dir} do
     # Generate the consumer pact with the plan 1 acceptance interactions (extract them into
-    # test/support/animal_interactions.ex so both suites share them).
+    # test/support/test/animal_interactions.ex so both suites share them).
     :ok = AnimalInteractions.write_consumer_pact(dir)
     {:ok, provider} = AnimalProvider.start()
     on_exit(fn -> AnimalProvider.stop(provider) end)
@@ -532,7 +532,7 @@ git commit -m "feat: verify message providers through the internal endpoint"
 
 **Files:**
 - Modify: `lib/pact_ex/verifier/options.ex`, `test/test_helper.exs` (exclude `:broker` unless `PACT_BROKER_URL` is set; build the `exclude` list from both rules, so the `:plugin` rule stays)
-- Create: `test/support/broker.ex` (Req helpers `publish_pact(path, consumer_version)` and `matrix(consumer, version)`)
+- Create: `test/support/test/broker.ex` (Req helpers `publish_pact(path, consumer_version)` and `matrix(consumer, version)`)
 - Test: `test/acceptance/broker_test.exs`, plus a validation test in `test/pact_ex/verifier_test.exs`
 
 **Interfaces:**
@@ -623,7 +623,7 @@ git commit -m "feat: verify from Pact Broker and publish verification results"
 ### Task 6: gRPC provider transport
 
 **Files:**
-- Create: `test/support/route_guide_server.ex` (`PactEx.Test.RouteGuideServer` and `PactEx.Test.WrongRouteGuideServer`, two `GRPC.Server` modules implementing `GetFeature`), `test/support/grpc_interactions.ex`
+- Create: `test/support/test/route_guide_server.ex` (`PactEx.Test.RouteGuideServer` and `PactEx.Test.WrongRouteGuideServer`, two `GRPC.Server` modules implementing `GetFeature`), `test/support/test/grpc_interactions.ex`
 - Modify: `mix.exs` (`{:grpc_server, "~> 1.0", only: :test}`), `mix.lock`, `test/acceptance/grpc_consumer_test.exs` (use `PactEx.Test.GrpcInteractions`)
 - Test: `test/acceptance/grpc_provider_test.exs`
 
@@ -685,7 +685,7 @@ Both servers `use GRPC.Server, service: Routeguide.RouteGuide.Service`, and each
 - `PactEx.Test.RouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "Big Tree", location: point}` for `(180, 200)`, and raises `GRPC.RPCError, status: :not_found, message: "no feature was found"` for any other point.
 - `PactEx.Test.WrongRouteGuideServer.get_feature/2` returns `%Routeguide.Feature{name: "", location: point}` for `(180, 200)`, which breaks `notEmpty('Big Tree')`, and raises the same `NOT_FOUND` for any other point.
 
-As in plan 2 Task 5, check the code `use GRPC.Server` generates with `MIX_ENV=test mix compile --warnings-as-errors` and `MIX_ENV=test mix dialyzer`. Nobody has run them on it. A Dialyzer warning that comes only from that macro-generated code: create `.dialyzer_ignore.exs` with an entry scoped to `test/support/route_guide_server.ex`, set `ignore_warnings: ".dialyzer_ignore.exs"` in the `dialyzer` config of `mix.exs`, and report it. Any other warning is a real finding: fix it.
+As in plan 2 Task 5, check the code `use GRPC.Server` generates with `MIX_ENV=test mix compile --warnings-as-errors` and `MIX_ENV=test mix dialyzer`. Nobody has run them on it. A Dialyzer warning that comes only from that macro-generated code: create `.dialyzer_ignore.exs` with an entry scoped to `test/support/test/route_guide_server.ex`, set `ignore_warnings: ".dialyzer_ignore.exs"` in the `dialyzer` config of `mix.exs`, and report it. Any other warning is a real finding: fix it.
 
 - [ ] **Step 2: Run it**
 
