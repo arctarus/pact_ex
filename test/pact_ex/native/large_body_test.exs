@@ -24,24 +24,13 @@ defmodule PactEx.Native.LargeBodyTest do
     %{"root" => %{"name" => "r", "children" => List.duplicate(child, @children)}}
   end
 
-  # The time that the scheduler threads of `type` have spent out of sleep.
-  defp busy(type) do
-    :microstate_accounting
-    |> :erlang.statistics()
-    |> Enum.filter(&(&1.type == type))
-    |> Enum.map(fn %{counters: counters} ->
-      counters |> Map.values() |> Enum.sum() |> Kernel.-(counters.sleep)
-    end)
-    |> Enum.sum()
-  end
-
   # Runs `fun` with microstate accounting on and returns the busy time it
   # added to the dirty CPU schedulers.
   defp dirty_cpu_busy_during(fun) do
     :erlang.system_flag(:microstate_accounting, true)
-    before = busy(:dirty_cpu_scheduler)
+    before = PactEx.SchedulerStats.busy(:dirty_cpu_scheduler)
     result = fun.()
-    {result, busy(:dirty_cpu_scheduler) - before}
+    {result, PactEx.SchedulerStats.busy(:dirty_cpu_scheduler) - before}
   end
 
   # The scans run on a dirty scheduler thread without a large stack. serde_json

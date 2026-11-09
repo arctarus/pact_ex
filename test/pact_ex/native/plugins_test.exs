@@ -8,21 +8,7 @@ defmodule PactEx.Native.PluginsTest do
   @moduletag timeout: 120_000
 
   setup do
-    previous = System.get_env("PACT_PLUGIN_DIR")
-
-    # A directory that does not exist: the driver then fails with
-    # `Plugin directory "..." does not exist`, which does not name the plugin.
-    # The test passes on any machine, whatever is in ~/.pact/plugins.
-    missing =
-      Path.join(System.tmp_dir!(), "pact_ex_no_plugins_#{System.unique_integer([:positive])}")
-
-    System.put_env("PACT_PLUGIN_DIR", missing)
-
-    on_exit(fn ->
-      if previous,
-        do: System.put_env("PACT_PLUGIN_DIR", previous),
-        else: System.delete_env("PACT_PLUGIN_DIR")
-    end)
+    on_exit(PactEx.MissingPluginDir.set())
   end
 
   defp v4_pact do
