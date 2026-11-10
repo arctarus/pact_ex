@@ -707,9 +707,11 @@ precompiled NIF cannot load. Build from source there (`PACT_EX_BUILD=1`, see
 musl-based systems such as Alpine, not a fallback for old glibc.
 
 There is no Windows build. CI runs the tests on Linux and macOS with OTP 27
-and 28. The test dependencies need OTP 27. The tests that load a plugin run on Linux only: on macOS the plugin
-driver sometimes hangs while it starts a plugin (see
-[plugins on macOS](#plugins-on-macos)).
+and 28. OTP 25 and 26 are not tested, although their NIFs are still built.
+`pact_ex` itself does not need OTP 27. Its test dependencies (the gRPC server)
+do, so the test suite no longer runs on OTP 26. The tests that load a plugin
+run on Linux only: on macOS the plugin driver sometimes hangs while it starts a
+plugin (see [plugins on macOS](#plugins-on-macos)).
 
 ## Plugins on macOS
 

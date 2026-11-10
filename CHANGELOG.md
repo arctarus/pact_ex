@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- CI tests OTP 27 and 28 only. OTP 26 is out of the test matrix, because the
+  test dependencies of the gRPC server need OTP 27. `pact_ex` itself does not
+  need OTP 27, and the precompiled NIFs are still built for the older OTP
+  versions.
 - Provider verification: `PactEx.Verifier.verify/1` and `verify!/1`, with
   pacts from files, directories, URLs or a Pact Broker. Provider states go
   through a `:state_handler` function (or your own `:state_change_url`), message
