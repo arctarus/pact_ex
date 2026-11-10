@@ -1,5 +1,7 @@
 # PactEx
 
+[![CI](https://github.com/arctarus/pact_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/arctarus/pact_ex/actions/workflows/ci.yml) [![Hex.pm](https://img.shields.io/hexpm/v/pact_ex.svg)](https://hex.pm/packages/pact_ex) [![Documentation](https://img.shields.io/badge/documentation-gray)](https://hexdocs.pm/pact_ex)
+
 [Pact](https://pact.io) contract testing for Elixir. PactEx is a
 [Rustler](https://github.com/rusterlium/rustler) NIF over the `pact_ffi` library,
 distributed with [`rustler_precompiled`](https://hex.pm/packages/rustler_precompiled),
