@@ -7,4 +7,12 @@
 # and fail too. With 120 s the driver times out first, the load returns an
 # error, and the cleanup runs.
 
-ExUnit.start(exclude: if(PactEx.Plugin.installed?("protobuf", "0.8.1"), do: [], else: [:plugin]))
+# `:plugin` tests need the protobuf plugin. `:broker` tests need a Pact Broker:
+# set PACT_BROKER_URL (see test/support/docker-compose.yml).
+excluded =
+  [
+    if(!PactEx.Plugin.installed?("protobuf", "0.8.1"), do: :plugin),
+    if(System.get_env("PACT_BROKER_URL") in [nil, ""], do: :broker)
+  ]
+
+ExUnit.start(exclude: Enum.reject(excluded, &is_nil/1))

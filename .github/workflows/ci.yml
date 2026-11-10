@@ -17,8 +17,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         beam:
-          # The oldest supported pair.
-          - { otp: "26", elixir: "1.18" }
+          # The oldest supported pair. OTP 26 is not tested: the test
+          # dependencies (ranch, cowlib, cowboy) need OTP 27.
           - { otp: "27", elixir: "1.18" }
           - { otp: "28", elixir: "1.19" }
     env:
@@ -79,6 +79,17 @@ jobs:
         env:
           MIX_ENV: test
 
+      # The :broker tests need a Pact Broker. Docker service containers are
+      # job-wide and only work on Linux runners, and this job also runs on
+      # macOS, so the broker is a compose file that is started on Linux only.
+      # On macOS PACT_BROKER_URL stays unset and the :broker tests are
+      # excluded. The URL has an IP, so the proxy settings below never apply.
+      - if: runner.os == 'Linux'
+        run: docker compose -f test/support/docker-compose.yml up -d --wait
+
+      - if: runner.os == 'Linux'
+        run: echo "PACT_BROKER_URL=http://127.0.0.1:9292" >> "$GITHUB_ENV"
+
       # Includes the abort matrix (test/abort_matrix_test.exs, tag
       # :abort_matrix), which runs each risky input in its own OS process.
       #
@@ -90,10 +101,16 @@ jobs:
       # `System.put_env` in test_helper.exs does not reach the NIF. Only the
       # upper-case names: GitHub treats env names case-insensitively, and
       # reqwest reads either spelling.
+      #
+      # PACT_DO_NOT_TRACK: every verification ends with an anonymous usage
+      # metric that pact_verifier posts to Google Analytics and waits for,
+      # with no timeout. Through the closed proxy port above it can hang on a
+      # macOS runner, and the verifier tests time out. This turns it off.
       - run: mix test
         env:
           HTTPS_PROXY: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost,::1
+          PACT_DO_NOT_TRACK: "true"
 
       # The protobuf plugin writes its own log files. When a job fails, they
       # show how far a hung or crashed plugin got. This step comes before the

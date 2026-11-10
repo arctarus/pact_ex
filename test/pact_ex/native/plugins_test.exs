@@ -3,12 +3,13 @@ defmodule PactEx.Native.PluginsTest do
   # so no other test sees the changed environment.
   use ExUnit.Case, async: false
   alias PactEx.Native
+  alias PactEx.Test.MissingPluginDir
 
   # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
   @moduletag timeout: 120_000
 
   setup do
-    on_exit(PactEx.MissingPluginDir.set())
+    on_exit(MissingPluginDir.set())
   end
 
   defp v4_pact do

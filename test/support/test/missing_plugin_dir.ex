@@ -1,4 +1,4 @@
-defmodule PactEx.MissingPluginDir do
+defmodule PactEx.Test.MissingPluginDir do
   @moduledoc """
   Points `PACT_PLUGIN_DIR` at a directory that does not exist. Test support
   only.
@@ -14,7 +14,7 @@ defmodule PactEx.MissingPluginDir do
   pass the result to `on_exit/1`:
 
       setup do
-        on_exit(PactEx.MissingPluginDir.set())
+        on_exit(PactEx.Test.MissingPluginDir.set())
       end
   """
   @spec set() :: (-> :ok)

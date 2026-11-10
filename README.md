@@ -5,9 +5,10 @@
 distributed with [`rustler_precompiled`](https://hex.pm/packages/rustler_precompiled),
 so you do not need Rust to use it.
 
-This release covers consumer tests: HTTP, asynchronous and synchronous
-messages, Pact plugins (for example protobuf) and a gRPC mock transport. The
-provider verifier is not here yet. See [Coming next](#coming-next).
+PactEx covers consumer tests (HTTP, asynchronous and synchronous messages, Pact
+plugins such as protobuf, and a gRPC mock transport) and provider verification
+(HTTP, messages and plugin transports such as gRPC, from files, directories,
+URLs or a Pact Broker).
 
 ## Installation
 
@@ -502,6 +503,119 @@ Stop it there and nowhere else. `stop/1` stops by port, so a second call, such
 as one in the test body as well, can stop the server of another test that got
 the same port.
 
+## Verifying a provider
+
+`PactEx.Verifier.verify/1` replays the interactions of a pact against your
+provider and compares the responses:
+
+```elixir
+PactEx.Verifier.verify(
+  provider: "animal_service",
+  provider_url: "http://localhost:4000",
+  dirs: ["pacts"],
+  state_handler: fn
+    "an alligator with the name Mary exists", _params, :setup -> MyApp.Animals.put("Mary")
+    _state, _params, _action -> :ok
+  end
+)
+# => :ok | {:error, %PactEx.VerificationError{}}
+```
+
+`verify!/1` raises the `PactEx.VerificationError` instead. Its message lists each
+failing interaction. The `:report` field has the full report of the verifier.
+
+### Provider states
+
+`:state_handler` is a function of arity 3 that gets the state, its params and the
+action (`:setup`, or `:teardown` with `state_change_teardown: true`). It returns
+`:ok`, `{:ok, map}` or `{:error, reason}`. To call an endpoint of your own,
+give `:state_change_url` instead. Giving both is an error. Interactions without
+a state do not call it.
+
+The handler gets the same `:request_timeout` as each request to the provider
+(5 s by default). A slower handler fails the interaction without a reason in
+`:callback_errors`.
+
+A small web server on `127.0.0.1` runs the handler, so it does not run in the
+process that called `verify/1`. Anything bound to your test process (its process
+dictionary, Mox expectations, an Ecto SQL sandbox checkout) needs a shared mode or
+an explicit allowance. A handler that fails fails the interaction at once, and
+its reason is in the `:callback_errors` of the error. The verifier would retry
+a server error for minutes, so the server answers with a 422.
+
+### Message providers
+
+```elixir
+PactEx.Verifier.verify(
+  provider: "weather_service",
+  dirs: ["pacts"],
+  message_providers: %{
+    "a weather data message" => fn _provider_states ->
+      {%{"temperature" => 19.5}, %{"queue" => "weather"}}
+    end
+  }
+)
+```
+
+Each function gets the provider states of the message and returns
+`{contents, metadata}` or just the contents. `:fallback_message_provider` answers
+the descriptions without a function. Leave `:provider_url` at its default,
+`127.0.0.1`: the verifier asks for each message there.
+
+### Pact Broker and publishing
+
+```elixir
+PactEx.Verifier.verify(
+  provider: "animal_service",
+  provider_url: "http://localhost:4000",
+  broker: [url: "https://broker.example.com", token: "..."],
+  state_handler: &MyApp.Pacts.state/3,
+  publish: true,
+  provider_version: "2.0.0",
+  provider_branch: "main"
+)
+```
+
+`:broker` takes `:consumer_version_selectors` (by default `mainBranch` and
+`deployedOrReleased`), `:enable_pending` and `:include_wip_pacts_since`.
+`publish: true` needs `:provider_version`. The verifier publishes results only
+for pacts that came from the broker, and a failed publication is only logged:
+`verify/1` still returns `:ok`.
+
+### gRPC and other plugin transports
+
+Give the transport and its port. The verifier loads the plugin named in the pact:
+
+```elixir
+PactEx.Verifier.verify(
+  provider: "grpcprovider",
+  provider_url: "http://127.0.0.1:50051",
+  transports: [%{protocol: "grpc", port: 50051}],
+  dirs: ["pacts"]
+)
+```
+
+### Things to know
+
+  * The state handler and the message providers need the optional dependencies
+    `:plug` and `:bandit`. Add them to your `deps` when you use either.
+    `verify/1` raises an `ArgumentError` that names them when they are missing.
+  * `no_pacts_is_error` (default `true`) fails a verification that ran no
+    interaction, for any source: an empty directory, or filters that match
+    nothing. A missing file or directory fails either way.
+  * A directory source reads only the files directly in it, not subdirectories,
+    and a file there that is not a pact is an error.
+  * The verifier prints its report to the standard output of the VM from native
+    code, so `ExUnit.CaptureIO` does not capture it.
+  * Every verification, plugin or not, stops every plugin process of the VM when
+    it ends. Do not run it at the same time as a consumer test that uses a
+    plugin: put them in `async: false` modules.
+  * `verify/1` blocks the calling process until the verification ends. Every
+    run also posts an anonymous usage metric to Google Analytics, as the other
+    Pact libraries do, and waits for the answer with no timeout. On a network
+    that drops packets that can block `verify/1` for a very long time. Set
+    `PACT_DO_NOT_TRACK=true` in the environment to turn it off.
+
 ## Logging
 
 The native library keeps one logger for the whole OS process. Set it up once,
@@ -592,10 +706,12 @@ precompiled NIF cannot load. Build from source there (`PACT_EX_BUILD=1`, see
 [building from source](#building-from-source)). The musl builds are for
 musl-based systems such as Alpine, not a fallback for old glibc.
 
-There is no Windows build. CI runs the tests on Linux and macOS with OTP 26,
-27 and 28. The tests that load a plugin run on Linux only: on macOS the plugin
-driver sometimes hangs while it starts a plugin (see
-[plugins on macOS](#plugins-on-macos)).
+There is no Windows build. CI runs the tests on Linux and macOS with OTP 27
+and 28. OTP 25 and 26 are not tested, although their NIFs are still built.
+`pact_ex` itself does not need OTP 27. Its test dependencies (the gRPC server)
+do, so the test suite no longer runs on OTP 26. The tests that load a plugin
+run on Linux only: on macOS the plugin driver sometimes hangs while it starts a
+plugin (see [plugins on macOS](#plugins-on-macos)).
 
 ## Plugins on macOS
 
@@ -619,13 +735,8 @@ If a load hangs on your Mac, plugin loading is the place to look.
 | `pact:enable_logging/1,2` | `PactEx.Log.init/1` | Available |
 | `pact:msg_interaction/2` (async messages) | `PactEx.Message` | Available |
 | Plugins, sync messages, gRPC transport (new) | `PactEx.using_plugin/3`, `PactEx.Plugin`, `PactEx.SyncMessage` | Available |
-| `pact_verifier:start_verifier/2`, `verify/1` (file and broker sources, message providers, state change URL, publish results) | `PactEx.Verifier` | Plan 3 |
-| Provider transports such as `grpc` (new) | `PactEx.Verifier` | Plan 3 |
-
-## Coming next
-
-The provider verifier (plan 3), with file, directory and broker sources, state
-change URL, message providers, result publishing and provider transports.
+| `pact_verifier:start_verifier/2`, `verify/1` (file and broker sources, message providers, state change URL, publish results) | `PactEx.Verifier` | Available |
+| Provider transports such as `grpc` (new) | `PactEx.Verifier` | Available |
 
 ## License
 

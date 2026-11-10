@@ -1,53 +1,22 @@
 defmodule PactEx.Acceptance.GrpcConsumerTest do
   use ExUnit.Case, async: false
 
-  alias PactEx.{Plugin, SyncMessage}
-  alias Routeguide.RouteGuide.Stub
+  alias PactEx.SyncMessage
+  alias PactEx.Test.GrpcInteractions
 
   # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
   @moduletag timeout: 120_000
   @moduletag :plugin
   @moduletag :capture_log
   @moduletag :tmp_dir
-  @proto Path.expand("../fixtures/route_guide.proto", __DIR__)
 
   setup %{tmp_dir: dir} do
-    pact =
-      "grpcconsumer"
-      |> PactEx.new("grpcprovider", pact_dir: dir)
-      |> PactEx.using_plugin("protobuf", "0.8.1")
-
-    %{pact: pact}
-  end
-
-  defp get_feature(contents) do
-    base = %{
-      "pact:proto" => @proto,
-      "pact:proto-service" => "RouteGuide/GetFeature",
-      "pact:content-type" => "application/protobuf"
-    }
-
-    "Route guide - GetFeature"
-    |> SyncMessage.new()
-    |> SyncMessage.given("feature 'Big Tree' exists")
-    |> SyncMessage.with_plugin_contents(
-      Plugin.contents("application/protobuf", Map.merge(base, contents))
-    )
-  end
-
-  defp call(port, point) do
-    {:ok, channel} = GRPC.Stub.connect("127.0.0.1:#{port}", adapter: GRPC.Client.Adapters.Mint)
-
-    try do
-      Stub.get_feature(channel, point)
-    after
-      GRPC.Stub.disconnect(channel)
-    end
+    %{pact: GrpcInteractions.pact(dir)}
   end
 
   test "GetFeature success writes a gRPC pact", %{pact: pact, tmp_dir: dir} do
     sm =
-      get_feature(%{
+      GrpcInteractions.get_feature(%{
         "request" => %{
           "latitude" => "matching(number, 180)",
           "longitude" => "matching(number, 200)"
@@ -67,7 +36,10 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
                sm,
                fn %{transport: %{port: port}} ->
                  assert {:ok, %Routeguide.Feature{name: "Big Tree"}} =
-                          call(port, %Routeguide.Point{latitude: 180, longitude: 200})
+                          GrpcInteractions.call(port, %Routeguide.Point{
+                            latitude: 180,
+                            longitude: 200
+                          })
                end,
                transport: "grpc"
              )
@@ -81,7 +53,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
 
   test "NOT_FOUND response metadata reaches the client as a gRPC error", %{pact: pact} do
     sm =
-      get_feature(%{
+      GrpcInteractions.get_feature(%{
         "request" => %{
           "latitude" => "matching(number, -1)",
           "longitude" => "matching(number, -1)"
@@ -98,7 +70,10 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
                sm,
                fn %{transport: %{port: port}} ->
                  assert {:error, %GRPC.RPCError{status: 5}} =
-                          call(port, %Routeguide.Point{latitude: -1, longitude: -1})
+                          GrpcInteractions.call(port, %Routeguide.Point{
+                            latitude: -1,
+                            longitude: -1
+                          })
                end,
                transport: "grpc"
              )
@@ -106,7 +81,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
 
   test "a gRPC interaction never called returns MismatchError", %{pact: pact} do
     sm =
-      get_feature(%{
+      GrpcInteractions.get_feature(%{
         "request" => %{"latitude" => "matching(number, 1)"},
         "response" => %{"name" => "notEmpty('x')"}
       })
@@ -126,7 +101,7 @@ defmodule PactEx.Acceptance.GrpcConsumerTest do
     tmp_dir: dir
   } do
     sm =
-      get_feature(%{
+      GrpcInteractions.get_feature(%{
         "request" => %{"latitude" => "matching(number, 1)"},
         "response" => %{"name" => "notEmpty('x')"}
       })

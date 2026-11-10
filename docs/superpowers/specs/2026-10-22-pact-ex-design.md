@@ -107,6 +107,32 @@ interaction =
    `Port`, never with C `fork`. Then: file, directory and broker sources, state change URL, message
    providers over an internal Plug endpoint, publish options, and provider transports.
 
+## Spike results (plan 3, Task 1)
+
+Question: does verifying with a Pact Broker source segfault in the NIF on Linux, as pact_erlang PR #49 reported,
+and does the 8 MiB stack thread avoid it?
+
+- Date and platform: 2026-11-09, Linux x86_64, `pact_ffi` 0.5.12, Pact Broker `pactfoundation/pact-broker:latest`
+  with SQLite.
+- Method: publish a pact, start a stand-in provider (a mock server), call `Native.verify/1` with a broker source
+  and the selector `{"latest": true}`. Ten runs, each in a fresh `mix run` process.
+- `PACT_EX_VERIFIER_STACK=caller` (body on the dirty scheduler thread), 5 runs: exit status 0, 0, 0, 0, 0. Each
+  verification returned exit code 0.
+- Large stack (body in `on_large_stack`), 5 runs: exit status 0, 0, 0, 0, 0. Each verification returned exit code 0.
+- Decision: **neither crashes**. The segfault cannot be reproduced on `pact_ffi` 0.5.12 with this setup. The
+  `caller` branch is removed. The large stack stays, because it costs almost nothing and the verifier drives its
+  futures with `block_on` on the calling thread. Plan 3 continues.
+
+Two things the spike found that the plan did not expect:
+
+- Building the verifier's HTTP client panics with "No rustls crypto provider is configured" unless a provider is
+  installed. pact_ffi installs one only when its logger starts, and `pact_mock_server` when a mock server starts.
+  So `verify` on a fresh VM, with no earlier mock server, returned exit code 1 and an empty report that says
+  `result: true`. The NIF installs the `ring` provider itself, and reports a panic inside `execute` (the stored
+  message differs from the generic one) as an error.
+- Inside the broker container `localhost` resolves to `::1` and the broker listens on IPv4, so the healthcheck
+  uses `127.0.0.1`.
+
 ## Risks
 
 - Building `pact_ffi` from source takes minutes. This affects CI and contributors only, since users get

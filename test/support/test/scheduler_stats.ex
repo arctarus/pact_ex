@@ -1,4 +1,4 @@
-defmodule PactEx.SchedulerStats do
+defmodule PactEx.Test.SchedulerStats do
   @moduledoc """
   Reads scheduler busy time from microstate accounting. Test support only.
   """

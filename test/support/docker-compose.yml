@@ -1,0 +1,18 @@
+# The Pact Broker for the :broker tests. Run:
+#   docker compose -f test/support/docker-compose.yml up -d --wait
+#   export PACT_BROKER_URL=http://localhost:9292
+services:
+  pact-broker:
+    image: pactfoundation/pact-broker:latest
+    ports:
+      - "9292:9292"
+    environment:
+      PACT_BROKER_DATABASE_ADAPTER: sqlite
+      PACT_BROKER_DATABASE_NAME: /tmp/pact_broker.sqlite3
+    # `up --wait` waits only for services that have a healthcheck. The image
+    # has wget, not curl. 127.0.0.1, because localhost resolves to ::1 there.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9292/diagnostic/status/heartbeat"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

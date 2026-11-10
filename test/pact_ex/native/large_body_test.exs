@@ -3,6 +3,7 @@ defmodule PactEx.Native.LargeBodyTest do
 
   alias PactEx.{Consumer, HTTP, Native}
   alias PactEx.Consumer.{Apply, BodyCheck}
+  alias PactEx.Test.SchedulerStats
 
   @moduletag :tmp_dir
   @moduletag timeout: 120_000
@@ -29,9 +30,9 @@ defmodule PactEx.Native.LargeBodyTest do
   defp dirty_cpu_busy_during(fun) do
     previous = :erlang.system_flag(:microstate_accounting, true)
     on_exit(fn -> :erlang.system_flag(:microstate_accounting, previous) end)
-    before = PactEx.SchedulerStats.busy(:dirty_cpu_scheduler)
+    before = SchedulerStats.busy(:dirty_cpu_scheduler)
     result = fun.()
-    {result, PactEx.SchedulerStats.busy(:dirty_cpu_scheduler) - before}
+    {result, SchedulerStats.busy(:dirty_cpu_scheduler) - before}
   end
 
   # The scans run on a dirty scheduler thread without a large stack. serde_json

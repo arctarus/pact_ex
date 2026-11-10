@@ -7,15 +7,15 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
   # it against the mock server and checks what was written.
   use ExUnit.Case, async: true
 
-  import PactEx.Matchers
-  alias PactEx.{Consumer, HTTP}
+  alias PactEx.Consumer
+  alias PactEx.Test.AnimalInteractions
 
   @consumer "animal_service_consumer"
   @provider "animal_service"
 
-  @mary %{"name" => "Mary", "type" => "alligator"}
-  @duke %{"name" => "Duke", "type" => "Dog"}
-  @alligators %{"animals" => [@mary]}
+  @mary AnimalInteractions.mary_animal()
+  @duke AnimalInteractions.duke_animal()
+  @alligators AnimalInteractions.alligators_body()
 
   @tag :tmp_dir
   test "five consumer interactions merge into one pact", %{tmp_dir: dir} do
@@ -42,92 +42,10 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
     Enum.find(interactions(dir), &(&1["description"] == description))
   end
 
-  # Interaction builders.
-
-  defp mary_interaction do
-    HTTP.interaction("a request to GET an animal: Mary")
-    |> HTTP.given("an alligator with the name Mary exists", @mary)
-    |> HTTP.with_request(:get, "/animals/Mary")
-    |> HTTP.will_respond_with(200, headers: %{"Content-Type" => "application/json"}, body: @mary)
-  end
-
-  # The body is a pre-encoded JSON string, with its type in the header.
-  defp duke_interaction do
-    HTTP.interaction("a request to GET an animal: Duke")
-    |> HTTP.given("a dog with the name Duke exists")
-    |> HTTP.with_request(:get, "/animals/Duke")
-    |> HTTP.will_respond_with(200,
-      headers: %{"Content-Type" => "application/json"},
-      body: JSON.encode!(@duke)
-    )
-  end
-
-  defp miles_interaction do
-    HTTP.interaction("a request to GET a non-existing animal: Miles")
-    |> HTTP.with_request(:get, regex("/animals/Miles", "^\\/animals\\/[a-zA-Z]+"))
-    |> HTTP.will_respond_with(404,
-      headers: %{"Content-Type" => "application/json"},
-      body: %{"error" => "not_found"}
-    )
-  end
-
-  defp max_interaction do
-    body =
-      like(%{
-        "name" => "Max",
-        "type" => "dog",
-        "age" => 3,
-        "nickname" => "koko",
-        "weight_kg" => 12.0,
-        "gender" => regex("male", "(male|female)"),
-        "carnivorous" => true,
-        "siblings" => each_like("lola"),
-        "list_att" => each_like([1, like("head")]),
-        "children" => ["coco"],
-        "children_details" =>
-          each_like(%{"name" => "coco", "age" => 1, "body_size" => [3, 4, 5]}),
-        "attributes" => each_key(%{"happy" => true}, "(happy|ferocious)")
-      })
-
-    HTTP.interaction("a request to create an animal: Max")
-    |> HTTP.with_request(:post, "/animals",
-      headers: %{"Content-Type" => "application/json"},
-      body: body
-    )
-    |> HTTP.will_respond_with(201)
-  end
-
-  defp max_animal do
-    %{
-      "name" => "Max",
-      "type" => "dog",
-      "age" => 3,
-      "nickname" => "lazgo",
-      "weight_kg" => 10.0,
-      "gender" => "male",
-      "carnivorous" => true,
-      "siblings" => ["lola", "mary"],
-      "list_att" => [[2, "legs"]],
-      "children" => ["coco"],
-      "children_details" => [%{"name" => "coco", "age" => 1, "body_size" => [3, 4, 5]}],
-      "attributes" => %{"ferocious" => false}
-    }
-  end
-
-  defp alligators_interaction do
-    HTTP.interaction("a request to find all alligators")
-    |> HTTP.given("an alligator with the name Mary exists")
-    |> HTTP.with_request(:get, "/animals", query: %{"type" => "alligator"})
-    |> HTTP.will_respond_with(200,
-      headers: %{"Content-Type" => "application/json"},
-      body: @alligators
-    )
-  end
-
   # Run and assert steps.
 
   defp run_get_animal_mary(pact, dir) do
-    interaction = mary_interaction()
+    interaction = AnimalInteractions.mary()
 
     assert :ok =
              Consumer.run(pact, [interaction], fn mock ->
@@ -143,7 +61,7 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
   end
 
   defp run_get_animal_duke(pact, dir) do
-    interaction = duke_interaction()
+    interaction = AnimalInteractions.duke()
 
     assert :ok =
              Consumer.run(pact, [interaction], fn mock ->
@@ -158,7 +76,7 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
   end
 
   defp run_get_animal_miles(pact, dir) do
-    interaction = miles_interaction()
+    interaction = AnimalInteractions.miles()
 
     assert :ok =
              Consumer.run(pact, [interaction], fn mock ->
@@ -175,11 +93,11 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
   end
 
   defp run_create_animal_max(pact, dir) do
-    interaction = max_interaction()
+    interaction = AnimalInteractions.max()
 
     assert :ok =
              Consumer.run(pact, [interaction], fn mock ->
-               assert :ok = AnimalClient.create_animal(mock.url, max_animal())
+               assert :ok = AnimalClient.create_animal(mock.url, AnimalInteractions.max_animal())
              end)
 
     rules = written(dir, interaction.description)["request"]["matchingRules"]["body"]
@@ -204,7 +122,7 @@ defmodule PactEx.Acceptance.HttpEndToEndTest do
   end
 
   defp run_find_all_alligators(pact, dir) do
-    interaction = alligators_interaction()
+    interaction = AnimalInteractions.alligators()
 
     assert :ok =
              Consumer.run(pact, [interaction], fn mock ->

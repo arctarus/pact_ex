@@ -2,6 +2,7 @@ defmodule PactEx.PluginContentsTest do
   use ExUnit.Case, async: false
 
   alias PactEx.{Consumer, Consumer.Apply, HTTP, MockServer, Plugin}
+  alias PactEx.Test.MissingPluginDir
 
   # Loads plugins. The driver's 60 s startup timeout must fire first; see test_helper.exs.
   @moduletag timeout: 120_000
@@ -116,7 +117,7 @@ defmodule PactEx.PluginContentsTest do
 
   describe "load_all/2 and cleanup/1" do
     setup do
-      on_exit(PactEx.MissingPluginDir.set())
+      on_exit(MissingPluginDir.set())
     end
 
     test "load_all/2 with no plugins is :ok" do

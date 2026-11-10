@@ -2,6 +2,7 @@ defmodule PactEx.Native.SchedulerTest do
   use ExUnit.Case, async: false
 
   alias PactEx.Native
+  alias PactEx.Test.SchedulerStats
 
   @calls 3_000
   @threshold_us 5_000
@@ -11,9 +12,9 @@ defmodule PactEx.Native.SchedulerTest do
   defp dirty_io_busy_during(fun) do
     previous = :erlang.system_flag(:microstate_accounting, true)
     on_exit(fn -> :erlang.system_flag(:microstate_accounting, previous) end)
-    before = PactEx.SchedulerStats.busy(:dirty_io_scheduler)
+    before = SchedulerStats.busy(:dirty_io_scheduler)
     fun.()
-    PactEx.SchedulerStats.busy(:dirty_io_scheduler) - before
+    SchedulerStats.busy(:dirty_io_scheduler) - before
   end
 
   test "the builder NIFs run on dirty IO schedulers" do
