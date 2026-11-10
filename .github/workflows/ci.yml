@@ -162,6 +162,11 @@ jobs:
       # Strict mode and the enabled checks are set in .credo.exs.
       - run: mix credo
 
+      # Broken function references in the usage rules point agents at code that
+      # does not exist. This runs in dev (usage_rules and ex_doc are dev-only),
+      # so `mix precommit`, which runs in test, does not cover it.
+      - run: mix usage_rules.validate usage-rules.md usage-rules/*.md
+
       # Building the PLTs from scratch takes minutes. The key changes with the
       # OTP and Elixir versions and with mix.lock; an older PLT is restored and
       # updated when only mix.lock changed.
