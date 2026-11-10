@@ -603,7 +603,11 @@ PactEx.Verifier.verify(
   * Every verification, plugin or not, stops every plugin process of the VM when
     it ends. Do not run it at the same time as a consumer test that uses a
     plugin: put them in `async: false` modules.
-  * `verify/1` blocks the calling process until the verification ends.
+  * `verify/1` blocks the calling process until the verification ends. Every
+    run also posts an anonymous usage metric to Google Analytics, as the other
+    Pact libraries do, and waits for the answer with no timeout. On a network
+    that drops packets that can block `verify/1` for a very long time. Set
+    `PACT_DO_NOT_TRACK=true` in the environment to turn it off.
 
 ## Logging
 

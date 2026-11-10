@@ -89,6 +89,14 @@ defmodule PactEx.Verifier do
       interaction fails, whatever the source. A missing file or directory fails
       either way.
 
+  ## Usage metrics
+
+  Like the other Pact libraries, the native verifier ends each run by posting an
+  anonymous usage metric to Google Analytics, and it waits for the answer with no
+  timeout. On a network that drops packets, `verify/1` can block for a very long
+  time. Set the environment variable `PACT_DO_NOT_TRACK=true` before the VM
+  starts to turn it off.
+
   Raises `ArgumentError` on an unknown option or a combination that cannot work.
   """
 

@@ -14,7 +14,10 @@ defmodule PactEx.Verifier.EndpointServerTest do
     assert %{status: 200, body: %{"id" => 1}} = Req.post!(url, json: body, retry: false)
 
     assert :ok = EndpointServer.stop(server)
-    assert {:error, %{reason: :econnrefused}} = Req.post(url, json: body, retry: false)
+    # A request to a stopped listener is refused, or the connection closes
+    # first, depending on timing.
+    assert {:error, %{reason: reason}} = Req.post(url, json: body, retry: false)
+    assert reason in [:econnrefused, :closed]
   end
 
   test "two servers get different ports" do

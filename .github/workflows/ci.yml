@@ -101,10 +101,16 @@ jobs:
       # `System.put_env` in test_helper.exs does not reach the NIF. Only the
       # upper-case names: GitHub treats env names case-insensitively, and
       # reqwest reads either spelling.
+      #
+      # PACT_DO_NOT_TRACK: every verification ends with an anonymous usage
+      # metric that pact_verifier posts to Google Analytics and waits for,
+      # with no timeout. Through the closed proxy port above it can hang on a
+      # macOS runner, and the verifier tests time out. This turns it off.
       - run: mix test
         env:
           HTTPS_PROXY: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost,::1
+          PACT_DO_NOT_TRACK: "true"
 
       # The protobuf plugin writes its own log files. When a job fails, they
       # show how far a hung or crashed plugin got. This step comes before the
