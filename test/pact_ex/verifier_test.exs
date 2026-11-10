@@ -148,7 +148,13 @@ defmodule PactEx.VerifierTest do
             {[provider: "p", state_handler: fn -> :ok end], ~r/function of arity 3/},
             {[provider: "p", message_providers: %{"d" => fn -> :ok end}], ~r/arity 1/},
             {[provider: "p", message_providers: [:a]], ~r/must be a map/},
-            {[provider: "p", publish: true], ~r/publish: true requires :provider_version/}
+            {[provider: "p", publish: true], ~r/publish: true requires :provider_version/},
+            {[provider: "p", transports: [%{port: 1}]], ~r/a transport is a map/},
+            {[provider: "p", transports: [%{protocol: "grpc", port: "1"}]],
+             ~r/a transport is a map/},
+            {[provider: "p", transports: [%{protocol: "grpc", port: 1, path: 1}]], ~r/:path/},
+            {[provider: "p", urls: [%{token: "t"}]], ~r/URL source/},
+            {[provider: "p", dirs: "pacts"], ~r/:dirs must be a list/}
           ] do
         assert_raise ArgumentError, message, fn -> Options.to_native(opts, 1) end
       end

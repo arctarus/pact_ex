@@ -26,6 +26,14 @@ defmodule PactEx.Verifier do
     * `{:ok, map}`, whose values the verifier can use in the request;
     * `{:error, reason}`, or it raises, to fail the interaction.
 
+  An interaction without a state does not call the handler: the verifier sends
+  the state `""` for it, and the endpoint answers it without your function.
+
+  The verifier gives each state change `:request_timeout`, as it does each
+  request to the provider. A handler that takes longer fails the interaction
+  without a reason in `:callback_errors`, and it keeps running until
+  `verify/1` returns.
+
   The handler does not run in the process that called `verify/1`. A small web
   server on `127.0.0.1` calls it, so anything bound to the calling process (its
   process dictionary, Mox expectations, an Ecto SQL sandbox checkout) needs a
@@ -84,7 +92,10 @@ defmodule PactEx.Verifier do
       itself.
     * `:publish`, `:provider_version`, `:provider_branch`, `:provider_tags` and
       `:build_url` - publish the results. `publish: true` needs
-      `:provider_version`.
+      `:provider_version`. The verifier publishes only the results of pacts that
+      came from a `:broker`. For `:files`, `:dirs` and `:urls` it publishes
+      nothing. A failed publication is only logged, so `verify/1` still returns
+      `:ok`.
     * `:no_pacts_is_error` - defaults to `true`: a verification that ran no
       interaction fails, whatever the source. A missing file or directory fails
       either way.
@@ -102,6 +113,10 @@ defmodule PactEx.Verifier do
 
   alias PactEx.{Error, Native, VerificationError}
   alias PactEx.Verifier.{EndpointServer, Options}
+
+  # EndpointServer exists only with the optional :plug and :bandit, and it is
+  # called only after a Code.ensure_loaded?/1 check.
+  @compile {:no_warn_undefined, EndpointServer}
 
   @doc """
   Verifies the provider.

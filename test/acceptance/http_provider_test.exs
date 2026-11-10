@@ -58,13 +58,48 @@ defmodule PactEx.Acceptance.HttpProviderTest do
     dir: dir,
     provider: p
   } do
-    handler = fn _state, _params, _action -> raise "boom" end
+    parent = self()
+
+    handler = fn _state, _params, _action ->
+      # Bandit runs the handler in the process of the connection, so its socket
+      # gives the port of the endpoint.
+      send(parent, {:endpoint_port, local_port()})
+      raise "boom"
+    end
 
     assert {:error, %PactEx.VerificationError{callback_errors: [first | _]}} =
              Verifier.verify(opts(dir, p, state_handler: handler))
 
     assert first =~ "boom"
     refute_receive {:pact_ex_callback_error, _, _}
+
+    assert_received {:endpoint_port, port}
+    assert {:error, :econnrefused} = :gen_tcp.connect(~c"127.0.0.1", port, [], 1_000)
+  end
+
+  test "a handler without a catch-all clause still verifies interactions without states", %{
+    dir: dir,
+    provider: p
+  } do
+    handler = fn
+      "an alligator with the name Mary exists", _params, :setup ->
+        AnimalProvider.put(p, AnimalInteractions.mary_animal())
+
+      "a dog with the name Duke exists", _params, :setup ->
+        AnimalProvider.put(p, AnimalInteractions.duke_animal())
+    end
+
+    assert :ok = Verifier.verify(opts(dir, p, state_handler: handler))
+  end
+
+  defp local_port do
+    [port] =
+      for socket <- Port.list(),
+          Port.info(socket, :connected) == {:connected, self()},
+          {:ok, {_ip, port}} <- [:inet.sockname(socket)],
+          do: port
+
+    port
   end
 
   test "an external state_change_url is called instead of the handler", %{dir: dir, provider: p} do

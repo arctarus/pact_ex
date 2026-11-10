@@ -529,7 +529,12 @@ failing interaction. The `:report` field has the full report of the verifier.
 `:state_handler` is a function of arity 3 that gets the state, its params and the
 action (`:setup`, or `:teardown` with `state_change_teardown: true`). It returns
 `:ok`, `{:ok, map}` or `{:error, reason}`. To call an endpoint of your own,
-give `:state_change_url` instead. Giving both is an error.
+give `:state_change_url` instead. Giving both is an error. Interactions without
+a state do not call it.
+
+The handler gets the same `:request_timeout` as each request to the provider
+(5 s by default). A slower handler fails the interaction without a reason in
+`:callback_errors`.
 
 A small web server on `127.0.0.1` runs the handler, so it does not run in the
 process that called `verify/1`. Anything bound to your test process (its process
@@ -573,7 +578,9 @@ PactEx.Verifier.verify(
 
 `:broker` takes `:consumer_version_selectors` (by default `mainBranch` and
 `deployedOrReleased`), `:enable_pending` and `:include_wip_pacts_since`.
-`publish: true` needs `:provider_version`.
+`publish: true` needs `:provider_version`. The verifier publishes results only
+for pacts that came from the broker, and a failed publication is only logged:
+`verify/1` still returns `:ok`.
 
 ### gRPC and other plugin transports
 

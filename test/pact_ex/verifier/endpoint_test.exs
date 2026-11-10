@@ -52,6 +52,12 @@ defmodule PactEx.Verifier.EndpointTest do
       assert_received :teardown
     end
 
+    test "the empty state of an interaction without states does not call the handler" do
+      conn = state(%{state_handler: fn _, _, _ -> raise "must not run" end}, "")
+      assert conn.status == 200
+      assert JSON.decode!(conn.resp_body) == %{}
+    end
+
     test "without a handler it answers 200" do
       assert state(%{}).status == 200
     end
@@ -148,6 +154,29 @@ defmodule PactEx.Verifier.EndpointTest do
       text = call(%{message_providers: providers}, "/_pact/messages", %{"description" => "text"})
       assert text.resp_body == "hello"
       assert hd(get_resp_header(text, "content-type")) =~ "text/plain"
+    end
+
+    test "a result that is not a message is 422 and reported, never a 500" do
+      ref = make_ref()
+
+      for {result, text} <- [
+            {{:ok, %{"a" => 1}}, "got: {:ok"},
+            {{:error, :sensor_down}, ":sensor_down"},
+            {%{"a" => {1, 2}}, "{1, 2}"},
+            {{%{"a" => 1}, %{"pid" => self()}}, "#PID<"},
+            {42, "got: 42"}
+          ] do
+        providers = %{"m" => fn _ -> result end}
+
+        conn =
+          call(%{message_providers: providers, report_to: {self(), ref}}, "/_pact/messages", %{
+            "description" => "m"
+          })
+
+        assert conn.status == 422, inspect(result)
+        assert_received {:pact_ex_callback_error, ^ref, reason}
+        assert reason =~ text, inspect(result)
+      end
     end
 
     test "a raising provider is 422 and reported" do

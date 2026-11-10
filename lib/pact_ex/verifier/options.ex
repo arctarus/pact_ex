@@ -63,6 +63,13 @@ defmodule PactEx.Verifier.Options do
     check_fun!(opts, :state_handler, 3)
     check_fun!(opts, :fallback_message_provider, 1)
     check_message_providers!(opts[:message_providers])
+
+    for key <- [:transports, :urls, :files, :dirs], not is_list(opts[key]) do
+      raise ArgumentError, "option #{inspect(key)} must be a list, got: #{inspect(opts[key])}"
+    end
+
+    Enum.each(opts[:transports], &check_transport!/1)
+    Enum.each(opts[:urls], &check_url!/1)
     opts = Keyword.update!(opts, :broker, &broker!/1)
 
     if opts[:publish] == true and opts[:provider_version] in [nil, ""] do
@@ -90,6 +97,30 @@ defmodule PactEx.Verifier.Options do
 
   defp broker!(other) do
     raise ArgumentError, "option :broker must be a keyword list, got: #{inspect(other)}"
+  end
+
+  defp check_transport!(%{protocol: protocol, port: port} = transport)
+       when is_binary(protocol) and is_integer(port) do
+    for key <- [:path, :scheme], value = Map.get(transport, key), not is_binary(value) do
+      raise ArgumentError,
+            "the #{inspect(key)} of a transport must be a string, got: #{inspect(value)}"
+    end
+
+    :ok
+  end
+
+  defp check_transport!(other) do
+    raise ArgumentError,
+          "a transport is a map with a :protocol (a string) and a :port (an integer), " <>
+            "got: #{inspect(other)}"
+  end
+
+  defp check_url!(url) when is_binary(url), do: :ok
+  defp check_url!(%{url: url}) when is_binary(url), do: :ok
+
+  defp check_url!(other) do
+    raise ArgumentError,
+          "a URL source is a string or a map with a :url, got: #{inspect(other)}"
   end
 
   defp check_fun!(opts, key, arity) do
