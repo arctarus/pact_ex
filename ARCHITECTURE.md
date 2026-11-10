@@ -202,7 +202,7 @@ end)
 ### CI and release (`.github/workflows/`)
 - **`ci.yml`:**
   - runs the tests (including the abort matrix), `cargo test`, fmt, clippy and `--warnings-as-errors`;
-  - matrix: Linux and macOS, with OTP 26/27/28.
+  - matrix: Linux and macOS, with OTP 27/28.
 - **`release.yml`:**
   - builds the 12 NIFs with `philss/rustler-precompiled-action` and checks that each tarball holds only `libpact_ex_nif`;
   - checks the glibc floor;

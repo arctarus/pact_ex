@@ -17,8 +17,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         beam:
-          # The oldest supported pair.
-          - { otp: "26", elixir: "1.18" }
+          # The oldest supported pair. OTP 26 is not tested: the test
+          # dependencies (ranch, cowlib, cowboy) need OTP 27.
           - { otp: "27", elixir: "1.18" }
           - { otp: "28", elixir: "1.19" }
     env:

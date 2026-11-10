@@ -706,8 +706,8 @@ precompiled NIF cannot load. Build from source there (`PACT_EX_BUILD=1`, see
 [building from source](#building-from-source)). The musl builds are for
 musl-based systems such as Alpine, not a fallback for old glibc.
 
-There is no Windows build. CI runs the tests on Linux and macOS with OTP 26,
-27 and 28. The tests that load a plugin run on Linux only: on macOS the plugin
+There is no Windows build. CI runs the tests on Linux and macOS with OTP 27
+and 28. The test dependencies need OTP 27. The tests that load a plugin run on Linux only: on macOS the plugin
 driver sometimes hangs while it starts a plugin (see
 [plugins on macOS](#plugins-on-macos)).
 
