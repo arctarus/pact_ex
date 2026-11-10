@@ -28,6 +28,45 @@ from the GitHub release. Rust is only needed to
 
 Requires Elixir 1.18 or later.
 
+## Using PactEx with AI agents
+
+PactEx ships [usage rules](https://hexdocs.pm/usage_rules) for coding agents,
+from the release after 0.3.0. Choose how they reach your agent with
+`usage_rules` (1.3 or later) and `mix usage_rules.sync`. The rules have a main
+file and four sub-rules: `consumer`, `messages`, `plugins` and `verifier`.
+
+`mix usage_rules.sync` only sees dependencies of the environment it runs in. Use
+one of these:
+
+- Add `:dev` to PactEx: `only: [:dev, :test]`. Dev compiles then load the NIF too.
+- Keep PactEx `only: :test`, give `usage_rules` and `igniter` `only: [:dev, :test]`,
+  and run `MIX_ENV=test mix usage_rules.sync`.
+
+Then pick one recipe in the `usage_rules:` key of your `mix.exs`:
+
+```elixir
+# Inline in AGENTS.md. A bare :pact_ex inlines the main file and all four
+# sub-rules (about 470 lines). Pick topics to keep it short:
+[file: "AGENTS.md", usage_rules: [{:pact_ex, sub_rules: ["consumer"]}]]
+# Only the main file: {:pact_ex, sub_rules: []}
+
+# A generated skill, .claude/skills/use-pact-ex, with every rule as a reference:
+[skills: [deps: [:pact_ex]]]
+
+# Your own skill. The description decides when the agent loads it, so make it
+# specific:
+[
+  skills: [
+    build: [
+      "pact-contract-testing": [
+        description: "Use when writing or fixing Pact consumer tests with pact_ex.",
+        usage_rules: [{:pact_ex, sub_rules: ["consumer", "messages"]}]
+      ]
+    ]
+  ]
+]
+```
+
 ## Quick start
 
 ```elixir
