@@ -95,7 +95,7 @@ defmodule PactEx.MixProject do
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files:
-        ~w(lib native/pact_ex_nif/src native/pact_ex_nif/Cargo.toml native/pact_ex_nif/Cargo.lock native/pact_ex_nif/.cargo checksum-*.exs mix.exs README.md ARCHITECTURE.md CHANGELOG.md LICENSE)
+        ~w(lib native/pact_ex_nif/src native/pact_ex_nif/Cargo.toml native/pact_ex_nif/Cargo.lock native/pact_ex_nif/.cargo checksum-*.exs usage-rules.md usage-rules mix.exs README.md ARCHITECTURE.md CHANGELOG.md LICENSE)
     ]
   end
 end
