@@ -248,6 +248,6 @@ end)
 
 Plans live in `docs/superpowers/plans/`:
 - **Plan 2:** async and sync messages, Pact plugins (`pactffi_using_plugin`, `pactffi_interaction_contents`) and the gRPC mock transport through the protobuf plugin.
-- **Plan 3:** provider verification from files, directories, URLs or a Pact Broker. It covers state change callbacks and message providers through an internal Plug endpoint, publishing results, and plugin transports. Done, unreleased.
+- **Plan 3:** provider verification from files, directories, URLs or a Pact Broker. It covers state change callbacks and message providers through an internal Plug endpoint, publishing results, and plugin transports. Done, in 0.3.0.
 
 Open follow-ups are tracked in `TODO.md`.

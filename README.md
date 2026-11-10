@@ -17,7 +17,7 @@ Add `pact_ex` to your test dependencies:
 ```elixir
 def deps do
   [
-    {:pact_ex, "~> 0.2.0", only: :test}
+    {:pact_ex, "~> 0.3.0", only: :test}
   ]
 end
 ```
