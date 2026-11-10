@@ -65,9 +65,13 @@ defmodule PactEx.MixProject do
       {:req, "~> 0.5", only: [:dev, :test]},
       {:grpc, "~> 1.0", only: :test},
       {:grpc_server, "~> 1.0", only: :test},
-      # ranch 2.4.0 uses the `maybe` expression, which needs OTP 27, so it does
-      # not compile on OTP 26. Drop the cap when OTP 26 is no longer supported.
+      # ranch 2.4.0, cowlib 2.20.0 and later, and the cowboy that needs them use
+      # the `maybe` expression, which needs OTP 27, so they do not compile on
+      # OTP 26. These test-only caps keep grpc_server on OTP 26. Drop them when
+      # OTP 26 is no longer supported.
       {:ranch, ">= 2.2.0 and < 2.4.0", only: :test},
+      {:cowlib, ">= 2.14.0 and < 2.20.0", only: :test},
+      {:cowboy, ">= 2.14.0 and < 2.20.0", only: :test},
       {:protobuf, "~> 0.17", only: :test},
       {:mint, "~> 1.9", only: [:dev, :test]},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
