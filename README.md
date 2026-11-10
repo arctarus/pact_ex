@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/arctarus/pact_ex/main/assets/logo.svg" alt="PactEx logo" width="160">
+</p>
+
 # PactEx
 
 [![CI](https://github.com/arctarus/pact_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/arctarus/pact_ex/actions/workflows/ci.yml) [![Hex.pm](https://img.shields.io/hexpm/v/pact_ex.svg)](https://hex.pm/packages/pact_ex) [![Documentation](https://img.shields.io/badge/documentation-gray)](https://hexdocs.pm/pact_ex)
