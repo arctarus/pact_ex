@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Usage rules for AI agents. The package ships `usage-rules.md` and four
+  sub-rules (`consumer`, `messages`, `plugins`, `verifier`) that
+  [`usage_rules`](https://hexdocs.pm/usage_rules) can inline in `AGENTS.md` or
+  turn into a skill. The README shows how.
+
 ## 0.3.0 - 2026-11-10
 
 - CI tests OTP 27 and 28 only. OTP 26 is out of the test matrix, because the
