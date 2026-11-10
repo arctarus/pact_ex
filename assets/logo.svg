@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">PactEx</title>
+  <defs>
+    <linearGradient id="drop" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#8d5fd3"/>
+      <stop offset="1" stop-color="#3a1d6e"/>
+    </linearGradient>
+    <linearGradient id="chain" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#cdb8f0"/>
+    </linearGradient>
+    <!-- The part of the left link that passes over the right one. -->
+    <clipPath id="top-half">
+      <rect x="0" y="0" width="512" height="300"/>
+    </clipPath>
+    <g id="link-a">
+      <rect x="135" y="261" width="150" height="78" rx="39" fill="none" stroke="#3a1d6e" stroke-width="30"/>
+      <rect x="135" y="261" width="150" height="78" rx="39" fill="none" stroke="url(#chain)" stroke-width="18"/>
+    </g>
+  </defs>
+
+  <!-- The drop -->
+  <path d="M256 36 C256 36 112 196 112 318 A144 144 0 0 0 400 318 C400 196 256 36 256 36 Z" fill="url(#drop)"/>
+  <ellipse cx="168" cy="236" rx="13" ry="40" transform="rotate(22 168 236)" fill="#ffffff" opacity="0.16"/>
+
+  <!-- Two links of a chain, interlocked -->
+  <g transform="translate(256 312) rotate(-32) translate(-256 -300)">
+    <use href="#link-a"/>
+    <rect x="227" y="261" width="150" height="78" rx="39" fill="none" stroke="#3a1d6e" stroke-width="30"/>
+    <rect x="227" y="261" width="150" height="78" rx="39" fill="none" stroke="url(#chain)" stroke-width="18"/>
+    <use href="#link-a" clip-path="url(#top-half)"/>
+  </g>
+</svg>
