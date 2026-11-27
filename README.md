@@ -37,7 +37,7 @@ Requires Elixir 1.18 or later.
 ## Using PactEx with AI agents
 
 PactEx ships [usage rules](https://hexdocs.pm/usage_rules) for coding agents,
-from the release after 0.3.0. Choose how they reach your agent with
+from 0.3.1. Choose how they reach your agent with
 `usage_rules` (1.3 or later) and `mix usage_rules.sync`. The rules have a main
 file and four sub-rules: `consumer`, `messages`, `plugins` and `verifier`.
 

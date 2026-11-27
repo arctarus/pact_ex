@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 - 2026-11-27
 
 - Usage rules for AI agents. The package ships `usage-rules.md` and four
   sub-rules (`consumer`, `messages`, `plugins`, `verifier`) that
