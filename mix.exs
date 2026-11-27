@@ -58,7 +58,7 @@ defmodule PactEx.MixProject do
 
   defp deps do
     [
-      {:rustler_precompiled, "~> 0.10"},
+      {:rustler_precompiled, "~> 0.8"},
       {:rustler, "~> 0.38", optional: true},
       {:plug, "~> 1.18", optional: true},
       {:bandit, "~> 1.6", optional: true},

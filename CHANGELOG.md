@@ -6,6 +6,7 @@
   sub-rules (`consumer`, `messages`, `plugins`, `verifier`) that
   [`usage_rules`](https://hexdocs.pm/usage_rules) can inline in `AGENTS.md` or
   turn into a skill. The README shows how.
+- Accept `rustler_precompiled` 0.8 and later, not only 0.10.
 
 ## 0.3.0 - 2026-11-10
 
