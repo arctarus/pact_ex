@@ -1,7 +1,7 @@
 defmodule PactEx.MixProject do
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.3.1"
   @source_url "https://github.com/arctarus/pact_ex"
 
   @spec project() :: keyword()
@@ -58,7 +58,7 @@ defmodule PactEx.MixProject do
 
   defp deps do
     [
-      {:rustler_precompiled, "~> 0.10"},
+      {:rustler_precompiled, "~> 0.8"},
       {:rustler, "~> 0.38", optional: true},
       {:plug, "~> 1.18", optional: true},
       {:bandit, "~> 1.6", optional: true},
